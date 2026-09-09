@@ -32,14 +32,17 @@ base that boots on today's hardware.
 - [x] automated repo refresh on tagged release (GitHub Actions → server)
 - [x] `larz-system` renders full `spec.units` to `/etc/systemd/system`
 - [x] `larz-aid` real HTTP router daemon (`/route` `/chat` `/models` `/health`)
-- [ ] `larz-system` systemd *drop-ins* for units it doesn't own
-- [ ] `larzsh` job control / `export` (pipes + redirection already work via sh)
+- [x] `larz-system` systemd *drop-ins* (`unit.d/x.conf` paths in `spec.units`)
+- [x] `larzsh` `export` / non-interactive `larzsh script.lz` (pipes work via sh)
+- [ ] `larzsh` real job control
 
 ## Phase 2 — installable images  ·  *in progress*
 
 - [x] Docker image — `ghcr.io/larz-scripter/larzos` (amd64 + arm64), repo + engine preinstalled
-- [ ] `debootstrap` → rootfs tarball (shared by all delivery forms)
-- [ ] **WSL distro** — `wsl --import`, published to the Microsoft Store
+- [x] `debootstrap` → rootfs tarball (`tools/build-rootfs.sh`, shared base)
+- [x] **WSL image** — `wsl --import larzos-rootfs.tar.gz` (systemd on, `larz` user)
+- [ ] publish the WSL image to the Microsoft Store
+- [ ] arm64 rootfs (needs `qemu-user-static` on the build host)
 - [ ] live ISO with a Calamares installer that writes the first `system.lz`
 - [ ] `larz-aid`: real local model execution (ollama/llama.cpp wrapper)
 

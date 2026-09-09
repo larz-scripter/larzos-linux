@@ -98,9 +98,12 @@ users      list of {
            }
 packages   list of string
 services   map of name -> "enabled" | "disabled"   (name may be foo or foo.timer)
-units      map of unit-filename -> { Section -> { key -> value } }
+units      map of unit-path -> { Section -> { key -> value } }
              value: string | number | bool (-> yes/no) | list (-> repeated key= lines)
-             written to /etc/systemd/system; a change runs daemon-reload
+             written under /etc/systemd/system; a change runs daemon-reload.
+             A key with a "/" is a path: "ssh.service.d/larzos.conf" writes a
+             drop-in that overrides the distro's ssh unit rather than a whole
+             new unit.
 audio      { profile "pro"|"desktop"|"off", rate int, quantum int }
 ai         { local_models list of string, gateway string }
 ```

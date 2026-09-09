@@ -73,3 +73,15 @@ Newest first. Mirrored to <https://larzos.com/larzos-linux/>.
 - `Dockerfile` + `docker.yml` -> `ghcr.io/larz-scripter/larzos` (amd64 +
   arm64): Ubuntu 24.04 + the apt repo + `larz-system`/`larz-ai`, entrypoint
   `larz-system`. `docker run -v system.lz:/etc/larzos/system.lz ... plan`.
+
+## 2026-09-09 — WSL image + Phase 1 tail
+
+- `tools/build-rootfs.sh` - debootstrap Ubuntu 24.04 + the LarzOS repo +
+  `larz-system`/`larz-ai`/`larzsh`, a `larz` user, `system.lz` seeded,
+  `/etc/wsl.conf` with systemd on. Produces one tarball that is the shared
+  base for WSL now, Docker and the live ISO next.
+- WSL: `wsl --import LarzOS C:\LarzOS larzos-rootfs.tar.gz`.
+- `larzsh`: `export`, `larzsh script.lz` non-interactive mode. Pipes /
+  redirection / `&&` already worked (unknown commands run via `/bin/sh`).
+- systemd module: a `spec.units` key with a `/` is a drop-in path
+  (`ssh.service.d/larzos.conf`) - override a distro unit without replacing it.

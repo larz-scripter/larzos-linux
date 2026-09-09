@@ -1,9 +1,14 @@
 # larzsh.lz - the LarzOS interactive shell (Linux-host edition).
 #
 # A small shell whose builtins are Larzscript. Unknown commands fall
-# through to the system PATH, so it is a usable everyday shell today while
-# the builtin set grows. The bare-metal edition shares this design but
+# through to the system PATH (via a real /bin/sh -c, so pipes, redirection
+# and && || work today). The bare-metal edition shares this design but
 # dispatches unknown words to imported .lz packages instead of execing.
+#
+# Usage:  larzsh            interactive
+#         larzsh script.lz  run a Larzscript program then exit
+
+let EXPORTS = {}
 
 fn prompt() {
   let u = capture("id -un").strip()
@@ -12,16 +17,39 @@ fn prompt() {
   return u + "@" + h + ":" + d + " larz$ "
 }
 
-fn builtin(cmd, rest) {
+fn envprefix() {
+  let p = ""
+  for k in keys(EXPORTS) { p = p + k + "=" + _shq(EXPORTS[k]) + " " }
+  return p == "" ? "" : "env " + p
+}
+
+fn _shq(s) { return "'" + s.replace("'", "'\\''") + "'" }
+
+fn exec_external(line) {
+  run(envprefix() + line)
+}
+
+fn builtin(cmd, rest, line) {
   if cmd == "cd" {
-    let dir = len(rest) >= 1 ? rest[0] : env("HOME", "/")
-    chdir(dir)
+    chdir(len(rest) >= 1 ? rest[0] : env("HOME", "/"))
     return true
   }
-  if cmd == "pwd"    { print(capture("pwd").strip()); return true }
+  if cmd == "pwd"  { print(capture("pwd").strip()); return true }
+  if cmd == "export" {
+    for pair in rest {
+      let eq = pair.find("=")
+      if eq > 0 { EXPORTS[pair[0:eq]] = pair[eq + 1:] }
+      else if env(pair, "") != "" { EXPORTS[pair] = env(pair, "") }
+    }
+    return true
+  }
+  if cmd == "env" and len(rest) == 0 {
+    for k in keys(EXPORTS) { print(k + "=" + EXPORTS[k]) }
+    return true
+  }
   if cmd == "help" {
-    print("larzsh builtins: cd  pwd  help  about  exit")
-    print("anything else runs from PATH.")
+    print("larzsh builtins: cd  pwd  export  env  help  about  exit")
+    print("everything else runs via /bin/sh (pipes, >, &&, || all work).")
     return true
   }
   if cmd == "about" {
@@ -32,15 +60,23 @@ fn builtin(cmd, rest) {
   return false
 }
 
+# non-interactive: `larzsh foo.lz [args]`
+if len(args) >= 1 {
+  let prog = args[0]
+  if file_exists(prog) {
+    run(envprefix() + "larzscript " + prog + " " + join(args[1:], " "))
+    exit(0)
+  }
+}
+
 print("LarzOS shell (larzsh) - type 'help'")
 while true {
   let line = input(prompt())
   if line == nil { print(""); break }
-  let parts = [p for p in line.strip().split(" ") if p != ""]
-  if len(parts) == 0 { continue }
-  let cmd = parts[0]
-  let rest = parts[1:]
-  if not builtin(cmd, rest) {
-    run(line)
+  let s = line.strip()
+  if s == "" { continue }
+  let parts = [p for p in s.split(" ") if p != ""]
+  if not builtin(parts[0], parts[1:], s) {
+    exec_external(s)
   }
 }
