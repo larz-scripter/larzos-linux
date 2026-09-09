@@ -41,9 +41,9 @@ base that boots on today's hardware.
 - [x] Docker image — `ghcr.io/larz-scripter/larzos` (amd64 + arm64), repo + engine preinstalled
 - [x] `debootstrap` → rootfs tarball (`tools/build-rootfs.sh`, shared base)
 - [x] **WSL image** — `wsl --import larzos-rootfs.tar.gz` (systemd on, `larz` user)
-- [x] **live ISO** (`tools/build-iso.sh`, casper) + `larz-install` — a
-      Larzscript disk installer, no Calamares
-- [ ] boot-test the ISO on real VirtualBox / bare metal; test `larz-install`
+- [x] **live ISO** (`tools/build-iso.sh`, casper, 116 MB) — boots to `larzsh`,
+      verified on VirtualBox 7.2
+- [x] `larz-install` — a Larzscript disk installer, no Calamares
 - [ ] publish the WSL image to the Microsoft Store
 - [ ] arm64 rootfs / ISO (needs `qemu-user-static` on the build host)
 - [ ] `larz-aid`: real local model execution (ollama/llama.cpp wrapper)

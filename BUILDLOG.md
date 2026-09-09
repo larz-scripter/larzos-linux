@@ -126,3 +126,14 @@ Newest first. Mirrored to <https://larzos.com/larzos-linux/>.
 - Testing on real VirtualBox 7.2 (PC2, reached via the NetBridge SOCKS
   path) — QEMU's software emulation couldn't get casper past the overlay
   probe; a real hypervisor is the right test surface.
+
+## 2026-09-09 (later) — live ISO VERIFIED on VirtualBox
+
+- The 116 MB ISO boots clean on real VirtualBox 7.2: GRUB -> kernel ->
+  casper -> autologin to `larzsh` (hostname `larzos`). `larz-aid route`,
+  `larz-system plan` (all 8 modules) run in the live session. The
+  QEMU-TCG overlay panic did not reproduce on a real hypervisor.
+- Published: https://larzos.com/larzos-linux/larzos-live-amd64.iso
+- `larz-install` first pass hit `sgdisk: not found` (minbase is bare) ->
+  ISO now bundles gdisk/parted/dosfstools/rsync/grub-*-bin, and
+  `larz-install` preflights its tools. Re-verifying (v0.1.4).
