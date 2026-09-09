@@ -95,3 +95,14 @@ Newest first. Mirrored to <https://larzos.com/larzos-linux/>.
   `larz-system` ships a minimal commented default spec.
 - repo-publish.sh prunes the pool to the newest version per package/arch.
 - release.yml now also builds + attaches the rootfs tarball on a tag.
+
+## 2026-09-09 — live ISO + larz-install
+
+- `tools/build-iso.sh` - hybrid BIOS/UEFI live ISO from the rootfs: adds
+  `linux-image-generic` + `casper`, squashes the filesystem, autologin as
+  `larz` into `larzsh`, `grub-mkrescue`. Serial console on so it can be
+  boot-tested headlessly.
+- `larz-install <disk>` (in `larz-system`) - the LarzOS-native disk
+  installer, in Larzscript: GPT (EFI + ext4 root), rsync the live system,
+  fstab by UUID, GRUB for UEFI or BIOS, keeps `/etc/larzos/system.lz`.
+  No Calamares - the installer is Larzscript, like everything else.

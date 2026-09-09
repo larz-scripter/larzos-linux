@@ -1,0 +1,86 @@
+#!/usr/bin/env larzscript
+# larz-install - write the running (live) LarzOS to a disk.
+#
+#   larz-install /dev/sda            interactive, wipes the disk
+#   larz-install /dev/sda --yes      no confirmation prompt
+#
+# GPT layout: 512 MiB EFI system partition + ext4 root. Copies the live
+# filesystem, installs GRUB for both UEFI and BIOS, writes an fstab, and
+# leaves /etc/larzos/system.lz in place so `larz-system apply` is the first
+# thing you run on the installed system.
+
+fn die(m) { print("larz-install: " + m); exit(1) }
+fn sh(cmd) { if run(cmd) != 0 { die("command failed: " + cmd) } }
+
+if len(args) < 1 { print("usage: larz-install <disk> [--yes]"); exit(0) }
+let disk = args[0]
+let assume_yes = args.contains("--yes")
+
+if capture("id -u").strip() != "0" { die("must run as root") }
+if not file_exists(disk) { die("no such device: " + disk) }
+
+let uefi = file_exists("/sys/firmware/efi")
+print("larz-install")
+print("  target:  " + disk + "   (" + capture("lsblk -dno SIZE " + disk).strip() + ")")
+print("  mode:    " + (uefi ? "UEFI" : "BIOS"))
+print("  spec:    /etc/larzos/system.lz")
+print("")
+print("This ERASES everything on " + disk + ".")
+if not assume_yes {
+  let ans = input("Type the device path again to confirm: ")
+  if ans == nil or ans.strip() != disk { die("not confirmed") }
+}
+
+# part suffix: /dev/sda -> sda1 ; /dev/nvme0n1 -> nvme0n1p1
+let p = disk.contains("nvme") or disk.contains("mmcblk") ? disk + "p" : disk
+
+print("partitioning ...")
+sh("sgdisk --zap-all " + disk)
+sh("sgdisk -n1:0:+512M -t1:ef00 -c1:EFI " + disk)
+sh("sgdisk -n2:0:0     -t2:8300 -c2:larzos-root " + disk)
+sh("partprobe " + disk + " || udevadm settle || sleep 2")
+
+print("formatting ...")
+sh("mkfs.fat -F32 -n LARZOS-EFI " + p + "1")
+sh("mkfs.ext4 -F -L larzos-root " + p + "2")
+
+print("mounting ...")
+sh("mkdir -p /mnt/larzos")
+sh("mount " + p + "2 /mnt/larzos")
+sh("mkdir -p /mnt/larzos/boot/efi")
+sh("mount " + p + "1 /mnt/larzos/boot/efi")
+
+print("copying the system (this takes a few minutes) ...")
+sh("rsync -aHAXS --info=progress2 / /mnt/larzos/ " +
+   "--exclude=/dev/* --exclude=/proc/* --exclude=/sys/* --exclude=/run/* " +
+   "--exclude=/tmp/* --exclude=/mnt/* --exclude=/media/* --exclude=/cdrom/* " +
+   "--exclude=/rofs/* --exclude='/swapfile' --exclude='/var/cache/apt/archives/*.deb'")
+
+print("writing fstab ...")
+let ru = capture("blkid -s UUID -o value " + p + "2").strip()
+let eu = capture("blkid -s UUID -o value " + p + "1").strip()
+write_file("/mnt/larzos/etc/fstab",
+  "UUID=" + ru + "  /          ext4  defaults  0 1\n" +
+  "UUID=" + eu + "  /boot/efi  vfat  umask=0077  0 1\n")
+
+# a real machine is not a live session
+sh("rm -f /mnt/larzos/etc/systemd/system/getty@tty1.service.d/autologin.conf")
+sh("rm -f /mnt/larzos/etc/systemd/system/serial-getty@ttyS0.service.d/autologin.conf")
+
+print("installing the bootloader ...")
+for d in ["dev", "dev/pts", "proc", "sys", "run"] { sh("mount --bind /" + d + " /mnt/larzos/" + d) }
+let grub_pkgs = uefi ? "grub-efi-amd64 grub-efi-amd64-signed shim-signed" : "grub-pc"
+let grub_cmd = uefi
+  ? "grub-install --target=x86_64-efi --efi-directory=/boot/efi --bootloader-id=LarzOS --recheck"
+  : "grub-install --target=i386-pc --recheck " + disk
+sh("chroot /mnt/larzos /bin/sh -euxc '" +
+   "export DEBIAN_FRONTEND=noninteractive; " +
+   "apt-get update && apt-get install -y --no-install-recommends " + grub_pkgs + "; " +
+   grub_cmd + "; update-grub'")
+for d in ["run", "sys", "proc", "dev/pts", "dev"] { sh("umount -l /mnt/larzos/" + d) }
+
+print("done. unmounting ...")
+sh("umount -R /mnt/larzos")
+print("")
+print("LarzOS is installed on " + disk + ". Remove the media and reboot.")
+print("First boot:  sudo larz-system apply")

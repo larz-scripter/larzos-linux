@@ -23,9 +23,11 @@ pkg.package({
     # the real programs, minus the dev shebang line
     "install -Dm755 ../../bin/larz-system $DESTDIR/usr/lib/larzos/larz-system.lz",
     "install -Dm755 ../../bin/larz-pkg    $DESTDIR/usr/lib/larzos/larz-pkg.lz",
+    "install -Dm755 files/larz-install    $DESTDIR/usr/lib/larzos/larz-install.lz",
     # wrappers
-    "install -Dm755 files/larz-system $DESTDIR/usr/bin/larz-system",
-    "install -Dm755 files/larz-pkg    $DESTDIR/usr/bin/larz-pkg",
+    "install -Dm755 files/larz-system  $DESTDIR/usr/bin/larz-system",
+    "install -Dm755 files/larz-pkg     $DESTDIR/usr/bin/larz-pkg",
+    "install -Dm755 files/larz-install.sh $DESTDIR/usr/bin/larz-install",
     # default spec + state dirs
     "install -Dm644 files/system.lz $DESTDIR/etc/larzos/system.lz",
   ],
