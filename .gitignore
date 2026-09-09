@@ -4,3 +4,5 @@ dist/
 /tmp/
 lz_modules/
 *.log
+packages/larzscript/larzscript.bin
+larzscript.bin
