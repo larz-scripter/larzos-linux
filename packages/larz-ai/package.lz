@@ -1,10 +1,9 @@
 # larz-ai - the OS-level AI model manager and router.
 #
-# larz-aid is a small daemon that listens on a local socket. Apps ask it
-# "give me a model for <task>"; it serves a local model when one fits and
-# the box can run it, otherwise it proxies to the configured Gateway. This
-# is the piece that makes LarzOS's AI story an OS service, not a per-app
-# concern. Config lives at /etc/larzos/ai.toml, managed by larz-system.
+# larz-aid is a local HTTP router on 127.0.0.1:8199. Apps POST /route to ask
+# the OS which model to use for a task; /chat is proxied to the configured
+# Gateway or served by a local model. This makes the AI story an OS service,
+# not a per-app concern. Config: /etc/larzos/ai.toml, managed by larz-system.
 
 import "larzos/pkg" as pkg
 
@@ -14,11 +13,12 @@ pkg.package({
   "summary":    "OS-level AI model manager and router (local models + Gateway fallback)",
   "arch":       "all",
   "section":    "misc",
-  "depends":    ["larzscript", "curl"],
+  "depends":    ["larzscript", "larz-system", "curl"],
   "build":      [],
   "install": [
-    "install -Dm755 files/larz-aid $DESTDIR/usr/bin/larz-aid",
+    "install -Dm755 files/larz-aid.lz  $DESTDIR/usr/lib/larzos/larz-aid.lz",
+    "install -Dm755 files/larz-aid     $DESTDIR/usr/bin/larz-aid",
     "install -Dm644 files/larz-ai.service $DESTDIR/lib/systemd/system/larz-ai.service",
-    "install -Dm644 files/ai.toml $DESTDIR/etc/larzos/ai.toml",
+    "install -Dm644 files/ai.toml      $DESTDIR/etc/larzos/ai.toml",
   ],
 })

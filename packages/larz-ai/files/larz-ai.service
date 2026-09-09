@@ -9,8 +9,12 @@ Type=simple
 ExecStart=/usr/bin/larz-aid serve
 Restart=on-failure
 RestartSec=2
-# Phase 0: the daemon is a skeleton and exits immediately. Once the socket
-# server lands (Phase 2) this unit supervises it for real.
+# Local-only router: binds 127.0.0.1:8199. Apps POST /route to ask the OS
+# which model to use; /chat is proxied to the Gateway or served locally.
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/lib/larzos
 
 [Install]
 WantedBy=multi-user.target

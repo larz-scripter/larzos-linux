@@ -1,0 +1,97 @@
+# http - a simple HTTP client for Larzscript, built on curl. get_json/
+# post_json handle JSON bodies directly; get_with_retry backs off
+# exponentially between attempts; session_new() carries a base_url and
+# a real curl cookie jar across calls, so a login cookie set by one
+# request is sent automatically on the next.
+#
+#   import "http" as http
+#   let body = http.get("https://example.com")
+#   let code = http.status("https://example.com")     # 200
+#   http.download("https://.../file.zip", "file.zip")
+#   let data = http.get_json("https://api.example.com/thing")
+#   http.post_json("https://api.example.com/things", {"name": "widget"})
+#   let body2 = http.get_with_retry("https://flaky.example.com", 3, 1)
+#
+#   let s = http.session_new("https://api.example.com")
+#   http.session_post(s, "/login", "user=a&pass=b")
+#   print(http.session_get(s, "/me"))       # sends the cookie set by /login
+#   http.session_close(s)
+
+import "json" as json
+
+# Proper POSIX single-quote shell-escaping: wrap in single quotes, and for
+# any single quote IN the input, close the quote, emit an escaped literal
+# quote, reopen the quote ('\''). Previously this dropped single quotes
+# instead of escaping them, silently corrupting any body/URL containing one
+# (e.g. real prose - "it's", "Larzscript's" - posted as a JSON body).
+fn _q(s) { return "'" + str(s).replace("'", "'\\''") + "'" }
+
+# GET the body of a URL (follows redirects, fails on HTTP errors).
+fn get(url) { return capture("curl -fsSL " + _q(url)) }
+
+# GET, or return the fallback string if the request fails.
+fn get_or(url, fallback) {
+  let out = capture("curl -fsSL " + _q(url) + " 2>/dev/null")
+  return out == "" ? fallback : out
+}
+
+# POST a body, return the response body.
+fn post(url, body) {
+  return capture("curl -fsSL -X POST --data " + _q(body) + " " + _q(url))
+}
+
+# POST a body with a Content-Type header (e.g. "application/json").
+fn post_with(url, body, content_type) {
+  return capture("curl -fsSL -X POST -H " + _q("Content-Type: " + content_type) +
+                 " --data " + _q(body) + " " + _q(url))
+}
+
+# The HTTP status code for a URL (e.g. 200, 404), as a number.
+fn status(url) {
+  return int(capture("curl -fsS -o /dev/null -w '%{http_code}' " + _q(url)).strip())
+}
+
+# Download a URL to a file. Returns true on success.
+fn download(url, path) {
+  return run("curl -fsSL " + _q(url) + " -o " + _q(path)) == 0
+}
+
+# POST a body with arbitrary headers (a dict of name->value) - e.g. an
+# Authorization/x-api-key header post_with() has no way to set.
+fn post_headers(url, body, headers) {
+  let hflags = ""
+  for k in keys(headers) { hflags = hflags + " -H " + _q(k + ": " + headers[k]) }
+  return capture("curl -fsSL -X POST" + hflags + " --data " + _q(body) + " " + _q(url))
+}
+
+fn get_json(url) { return json.parse(get(url)) }
+fn post_json(url, data) { return post_with(url, json.stringify(data), "application/json") }
+
+# Retries on any failure (curl error or empty body), doubling the delay
+# each time. Throws the last failure if every attempt is exhausted.
+fn get_with_retry(url, max_retries=3, base_delay=1) {
+  let attempt = 1
+  let delay = base_delay
+  while true {
+    let out = get_or(url, nil)
+    if out != nil { return out }
+    if attempt >= max_retries { throw {"type": "LarzHttpError", "message": "GET " + url + " failed after " + str(max_retries) + " attempts"} }
+    sleep(delay)
+    delay = delay * 2
+    attempt = attempt + 1
+  }
+}
+
+# ---- session: base_url + a real curl cookie jar shared across calls ----
+fn session_new(base_url="") {
+  return {"base_url": base_url, "jar": "/tmp/larz_http_jar_" + str(int(time() * 1000)) + ".txt"}
+}
+fn _full_url(s, path) { return s["base_url"] + path }
+fn session_get(s, path) {
+  return capture("curl -fsSL -c " + _q(s["jar"]) + " -b " + _q(s["jar"]) + " " + _q(_full_url(s, path)))
+}
+fn session_post(s, path, body) {
+  return capture("curl -fsSL -c " + _q(s["jar"]) + " -b " + _q(s["jar"]) +
+                 " -X POST --data " + _q(body) + " " + _q(_full_url(s, path)))
+}
+fn session_close(s) { remove(s["jar"]) }

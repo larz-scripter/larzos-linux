@@ -1,0 +1,5 @@
+.git
+dist
+*.deb
+*.iso
+.github

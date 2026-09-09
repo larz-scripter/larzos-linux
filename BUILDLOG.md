@@ -59,3 +59,17 @@ Newest first. Mirrored to <https://larzos.com/larzos-linux/>.
 - Cloudflare edge no longer caches apt metadata (dropped `Packages.gz`;
   extensionless indexes are `cache-status: DYNAMIC`). arm64 `apt-get update`
   verifies clean.
+
+## 2026-09-09 — larz-aid daemon + container image
+
+- `larz-aid` is a real HTTP router now (was a CLI stub): `GET /health`,
+  `GET /models`, `POST /route {"task"}` -> `{backend, model}`,
+  `POST /chat` -> proxied to the Gateway or served locally. Binds
+  127.0.0.1:8199, hardened systemd unit. Built on the `tcp` + `http`
+  Larzscript libs. Verified end to end on the installed layout.
+- `/usr/lib/larzos` is now the shared Larzscript library root every LarzOS
+  package imports from (engine + json/toml/tcp/http); `larz-ai` depends on
+  `larz-system` for it.
+- `Dockerfile` + `docker.yml` -> `ghcr.io/larz-scripter/larzos` (amd64 +
+  arm64): Ubuntu 24.04 + the apt repo + `larz-system`/`larz-ai`, entrypoint
+  `larz-system`. `docker run -v system.lz:/etc/larzos/system.lz ... plan`.

@@ -28,19 +28,20 @@ base that boots on today's hardware.
 - [x] `larzscript` + `larz-system` packaged; `tools/refresh.sh` republishes
 - [x] `system.lz` rollback + `status` + `history` (snapshots in `/var/lib/larzos/history/`)
 - [x] bootstrap script: `curl … | sudo sh` → repo key + `apt install`
-- [ ] arm64 packages (`larzscript` is arch-specific)
-- [ ] `larz-system` generates real systemd drop-ins, not just enables units
-- [ ] automated repo refresh on tagged release (GitHub Actions → server)
-- [ ] `larzsh` fleshed out (pipes, redirection, job control)
-- [ ] `larz-aid` local socket daemon (currently a routing skeleton)
+- [x] arm64 packages (`larzscript` is arch-specific)
+- [x] automated repo refresh on tagged release (GitHub Actions → server)
+- [x] `larz-system` renders full `spec.units` to `/etc/systemd/system`
+- [x] `larz-aid` real HTTP router daemon (`/route` `/chat` `/models` `/health`)
+- [ ] `larz-system` systemd *drop-ins* for units it doesn't own
+- [ ] `larzsh` job control / `export` (pipes + redirection already work via sh)
 
-## Phase 2 — installable images
+## Phase 2 — installable images  ·  *in progress*
 
+- [x] Docker image — `ghcr.io/larz-scripter/larzos` (amd64 + arm64), repo + engine preinstalled
 - [ ] `debootstrap` → rootfs tarball (shared by all delivery forms)
 - [ ] **WSL distro** — `wsl --import`, published to the Microsoft Store
-- [ ] Docker image for the dev + AI use case
 - [ ] live ISO with a Calamares installer that writes the first `system.lz`
-- [ ] `larz-aid`: real local model management (ollama/llama.cpp wrapper) + Gateway routing
+- [ ] `larz-aid`: real local model execution (ollama/llama.cpp wrapper)
 
 ## Phase 3 — the identity
 

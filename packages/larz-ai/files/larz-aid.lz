@@ -1,0 +1,152 @@
+#!/usr/bin/env larzscript
+# larz-aid - the LarzOS AI router.
+#
+#   larz-aid serve            run the local HTTP router (127.0.0.1:8199)
+#   larz-aid route <task>     print which backend would serve <task>
+#   larz-aid models           list configured local models
+#   larz-aid health           check a running daemon
+#
+# Config: /etc/larzos/ai.toml (managed by `larz-system`):
+#
+#   gateway = "https://gateway.larzpay.com"
+#   [local]
+#   models = ["qwen2.5-coder:7b"]
+#
+# HTTP API (JSON):
+#   GET  /health              -> {"ok":true,"models":N,"gateway":"..."}
+#   GET  /models              -> {"models":[...]}
+#   POST /route  {"task":".."} -> {"backend":"local|gateway","model":".."}
+#   POST /chat   {"task":"..","prompt":".."}
+#        gateway route -> proxied to <gateway>/v1/chat  (best effort)
+#        local route   -> {"stub":true,...} until local model exec lands
+#
+# One connection at a time by design - this is a router/dispatcher, not an
+# inference server. It exists so apps ask the OS "what model for X" instead
+# of each hard-coding endpoints and keys.
+
+import "toml" as toml
+import "json" as json
+import "tcp" as tcp
+import "http" as http
+
+let CONF = env("LARZOS_AI_CONF", "/etc/larzos/ai.toml")
+let PORT = int(env("LARZOS_AI_PORT", "8199"))
+
+fn load() {
+  if not file_exists(CONF) { return {"gateway": "", "local": {"models": []}} }
+  return toml.parse(read_file(CONF))
+}
+
+fn local_models(cfg) {
+  if not cfg.has("local") { return [] }
+  if not cfg["local"].has("models") { return [] }
+  return cfg["local"]["models"]
+}
+
+# Route heuristic: coding tasks prefer a local coder model; otherwise use
+# the gateway, falling back to any local model when there is no gateway.
+fn route(cfg, task) {
+  let models = local_models(cfg)
+  let t = task == nil ? "" : task
+  if t.contains("code") or t.contains("complete") {
+    for m in models {
+      if m.contains("coder") or m.contains("code") {
+        return {"backend": "local", "model": m}
+      }
+    }
+  }
+  if len(models) > 0 and (t.contains("local") or cfg["gateway"] == "") {
+    return {"backend": "local", "model": models[0]}
+  }
+  if cfg["gateway"] != "" {
+    return {"backend": "gateway", "model": cfg["gateway"]}
+  }
+  if len(models) > 0 { return {"backend": "local", "model": models[0]} }
+  return {"backend": "none", "model": ""}
+}
+
+# ---- HTTP plumbing ----
+fn _reqline(request) {
+  let nl = request.find("\r\n")
+  if nl < 0 { nl = request.find("\n") }
+  if nl < 0 { return [request, ""] }
+  return [request[0:nl], request[nl:]]
+}
+
+fn _body(request) {
+  let sep = request.find("\r\n\r\n")
+  if sep >= 0 { return request[sep + 4:] }
+  sep = request.find("\n\n")
+  if sep >= 0 { return request[sep + 2:] }
+  return ""
+}
+
+fn _resp(code, obj) {
+  let payload = json.stringify(obj)
+  let status = code == 200 ? "200 OK" : (code == 404 ? "404 Not Found" : "400 Bad Request")
+  return "HTTP/1.1 " + status + "\r\n" +
+         "Content-Type: application/json\r\n" +
+         "Content-Length: " + str(len(payload)) + "\r\n" +
+         "Connection: close\r\n\r\n" + payload
+}
+
+fn handle(request) {
+  let cfg = load()
+  let parts = _reqline(request)[0].split(" ")
+  if len(parts) < 2 { return _resp(400, {"error": "bad request"}) }
+  let method = parts[0]
+  let path = parts[1]
+
+  if method == "GET" and path == "/health" {
+    return _resp(200, {"ok": true, "models": len(local_models(cfg)), "gateway": cfg["gateway"]})
+  }
+  if method == "GET" and path == "/models" {
+    return _resp(200, {"models": local_models(cfg)})
+  }
+  if method == "POST" and path == "/route" {
+    let b = _body(request)
+    let task = b == "" ? "" : json.parse(b).get("task", "")
+    return _resp(200, route(cfg, task))
+  }
+  if method == "POST" and path == "/chat" {
+    let data = json.parse(_body(request))
+    let r = route(cfg, data.get("task", ""))
+    if r["backend"] == "gateway" {
+      let out = http.post_with(cfg["gateway"] + "/v1/chat", json.stringify(data), "application/json")
+      return _resp(200, {"backend": "gateway", "model": cfg["gateway"], "response": out})
+    }
+    if r["backend"] == "local" {
+      return _resp(200, {"backend": "local", "model": r["model"], "stub": true,
+                         "note": "local model execution lands in Phase 2"})
+    }
+    return _resp(400, {"error": "no backend available"})
+  }
+  return _resp(404, {"error": "no route", "path": path})
+}
+
+# ---- dispatch ----
+if len(args) == 0 { print("usage: larz-aid serve|route|models|health"); exit(0) }
+let cmd = args[0]
+let cfg = load()
+
+if cmd == "serve" {
+  print("larz-aid: routing on 127.0.0.1:" + str(PORT) +
+        "  (" + str(len(local_models(cfg))) + " local model(s), gateway " +
+        (cfg["gateway"] == "" ? "none" : cfg["gateway"]) + ")")
+  tcp.serve(PORT, handle)
+} else if cmd == "route" {
+  if len(args) < 2 { print("larz-aid: route needs a task"); exit(1) }
+  let r = route(cfg, args[1])
+  print(r["backend"] + "  " + r["model"])
+} else if cmd == "models" {
+  let ms = local_models(cfg)
+  if len(ms) == 0 { print("(no local models configured)") }
+  for m in ms { print("  " + m) }
+} else if cmd == "health" {
+  let out = http.get_or("http://127.0.0.1:" + str(PORT) + "/health", "")
+  if out == "" { print("larz-aid: not responding on :" + str(PORT)); exit(1) }
+  print(out)
+} else {
+  print("larz-aid: unknown command: " + cmd)
+  exit(1)
+}

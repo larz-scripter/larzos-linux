@@ -15,9 +15,10 @@ pkg.package({
   "depends":    ["larzscript"],
   "build":      [],
   "install": [
-    # library tree (engine + modules + vendored json/toml)
+    # the shared LarzOS Larzscript library root - engine, modules, and the
+    # vendored stdlib bits every larzos package imports
     "mkdir -p $DESTDIR/usr/lib/larzos",
-    "cp -r ../../lib/larzos ../../lib/json ../../lib/toml $DESTDIR/usr/lib/larzos/",
+    "cp -r ../../lib/larzos ../../lib/json ../../lib/toml ../../lib/tcp ../../lib/http $DESTDIR/usr/lib/larzos/",
     # the real programs, minus the dev shebang line
     "install -Dm755 ../../bin/larz-system $DESTDIR/usr/lib/larzos/larz-system.lz",
     "install -Dm755 ../../bin/larz-pkg    $DESTDIR/usr/lib/larzos/larz-pkg.lz",

@@ -1,0 +1,85 @@
+# tcp - a real TCP server, in Larzscript, no separate runtime needed.
+# The ergonomic layer over the interpreter's own socket_listen/accept/
+# read/write/close builtins - the same relationship fs has to
+# read_file/write_file. A socket handle is a plain number (the OS
+# fd/SOCKET) the whole way through; nothing opaque to unwrap.
+#
+# Hosted only - LarzOS's own kernel has its own real networking already
+# (the `net` package, driver-level, a completely different stack); the
+# browser/wasm build has no raw TCP at all by sandbox design and these
+# builtins throw a clear SocketError there instead of silently failing.
+#
+# One connection at a time, by design: this is a single-threaded
+# interpreter with no concurrency primitive, so serve() handles one
+# request, then the next - a genuine, working server, just not a
+# concurrent one. Good enough to answer "can Larzscript build a
+# backend" with yes, not good enough for real production traffic.
+#
+#   import "tcp" as tcp
+#   tcp.serve(8080, fn(request) {
+#     return "HTTP/1.1 200 OK\r\nContent-Length: 5\r\n\r\nhello"
+#   })
+#
+#   # or drive the loop yourself:
+#   let fd = tcp.listen(8080)
+#   let conn = tcp.accept(fd)
+#   let request = tcp.read(conn)
+#   tcp.write_all(conn, "HTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\nhi")
+#   tcp.close(conn)
+
+# Starts listening on `port`. Returns the raw socket handle.
+fn listen(port) { return socket_listen(port) }
+
+# Blocks until a client connects, then returns its socket handle.
+fn accept(listener) { return socket_accept(listener) }
+
+# Reads up to `max_bytes` (default 65536) from `conn`. Returns "" on a
+# clean close/EOF from the other end - not an error, the normal way a
+# connection ends.
+fn read(conn, max_bytes=65536) { return socket_read(conn, max_bytes) }
+
+# socket_write() is one real send() call, which is allowed to send fewer
+# bytes than asked (a real, if rare, possibility on any TCP stack) -
+# write_all() loops until every byte is actually sent, so callers don't
+# have to think about partial writes themselves.
+fn write_all(conn, data) {
+  let total = len(data)
+  let sent = 0
+  while sent < total {
+    let n = socket_write(conn, sent == 0 ? data : data[sent:total])
+    if n <= 0 { throw {"type": "SocketError", "message": "write_all(): connection closed before all data was sent"} }
+    sent = sent + n
+  }
+  return sent
+}
+
+fn close(conn) { return socket_close(conn) }
+
+# Accepts exactly one connection, hands its raw request text to
+# `handler(request)`, writes back whatever it returns, closes, and
+# returns. For a script that wants to answer one request and exit
+# (a test, a one-shot healthcheck responder) rather than run forever.
+fn serve_once(port, handler) {
+  let fd = listen(port)
+  let conn = accept(fd)
+  let request = read(conn)
+  let response = handler(request)
+  write_all(conn, response)
+  close(conn)
+  close(fd)
+}
+
+# The real server loop: listen on `port`, and for every connection that
+# arrives, read the request, call `handler(request)` for the response
+# text, write it back, close, and wait for the next one. Blocks forever
+# - this is what actually answers "can Larzscript run a backend."
+fn serve(port, handler) {
+  let fd = listen(port)
+  while true {
+    let conn = accept(fd)
+    let request = read(conn)
+    let response = handler(request)
+    write_all(conn, response)
+    close(conn)
+  }
+}

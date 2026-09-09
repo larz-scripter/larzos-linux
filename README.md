@@ -54,6 +54,16 @@ Repo line: `deb [signed-by=/usr/share/keyrings/larzos-archive-keyring.gpg] https
 Then edit `/etc/larzos/system.lz`, run `larz-system plan`, then
 `sudo larz-system apply`.
 
+## Try it in a container
+
+```sh
+docker run --rm -v "$PWD/examples/system.lz:/etc/larzos/system.lz" \
+    ghcr.io/larz-scripter/larzos plan
+```
+
+The image is Ubuntu 24.04 with the LarzOS repo + `larz-system` + `larz-ai`
+preinstalled (amd64 and arm64).
+
 ## Run from source (any Debian/Ubuntu box)
 
 ```sh
