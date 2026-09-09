@@ -52,10 +52,21 @@ fi
 # New builds land in $DEB_DIR; the pool is cumulative (arch-specific debs
 # from other build hosts, e.g. arm64, stay put). Newer versions of the same
 # file overwrite by name.
-mkdir -p "$REPO_ROOT/pool/$COMPONENT"
+POOL="$REPO_ROOT/pool/$COMPONENT"
+mkdir -p "$POOL"
 if ls "$DEB_DIR"/*.deb >/dev/null 2>&1; then
-  cp -f "$DEB_DIR"/*.deb "$REPO_ROOT/pool/$COMPONENT/"
+  cp -f "$DEB_DIR"/*.deb "$POOL/"
 fi
+
+# Keep only the newest version of each package/arch in the pool.
+for f in "$POOL"/*.deb; do
+  [ -e "$f" ] || continue
+  pkg=$(dpkg-deb -f "$f" Package); arch=$(dpkg-deb -f "$f" Architecture)
+  newest=$(for g in "$POOL/${pkg}_"*"_${arch}.deb"; do
+             [ -e "$g" ] && printf '%s %s\n' "$(dpkg-deb -f "$g" Version)" "$g"
+           done | sort -V | tail -1 | cut -d' ' -f2-)
+  [ "$f" = "$newest" ] || { echo "[repo-publish] prune $(basename "$f")"; rm -f "$f"; }
+done
 
 # --- Packages indexes, per architecture --------------------------------
 ls "$REPO_ROOT/pool/$COMPONENT"/*.deb >/dev/null 2>&1 || {
