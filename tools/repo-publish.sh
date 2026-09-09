@@ -72,8 +72,9 @@ for arch in $ARCHES; do
   d="dists/$SUITE/$COMPONENT/binary-$arch"
   mkdir -p "$d"
   apt-ftparchive --arch "$arch" packages "pool/$COMPONENT" > "$d/Packages"
-  sed -i "s#^Filename: #Filename: #" "$d/Packages"
-  gzip -9c "$d/Packages" > "$d/Packages.gz"
+  # No Packages.gz/.xz on purpose: extensionless files are not edge-cached by
+  # Cloudflare, so apt always sees fresh metadata. The index is a few KB.
+  rm -f "$d/Packages.gz" "$d/Packages.xz"
   cat > "$d/Release" <<EOF
 Archive: $SUITE
 Component: $COMPONENT
