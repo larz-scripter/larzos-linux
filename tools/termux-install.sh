@@ -34,7 +34,7 @@ esac
 say "installing proot-distro"
 pkg install -y proot-distro >/dev/null 2>&1 || pkg install -y proot-distro
 
-if proot-distro list --installed 2>/dev/null | grep -qw "$DISTRO"; then
+if [ -d "$PREFIX/var/lib/proot-distro/installed-rootfs/$DISTRO" ]; then
   say "$DISTRO container already installed"
 else
   say "installing the $DISTRO arm64 container (~150 MB download, one time)"
