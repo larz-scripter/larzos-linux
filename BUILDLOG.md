@@ -49,3 +49,13 @@ Newest first. Mirrored to <https://larzos.com/larzos-linux/>.
 - `repo-publish.sh`: pool is cumulative — arm64 debs built on another host
   sit alongside amd64 without being clobbered by an amd64-only rebuild.
 - arm64 `larzscript` package published; repo now serves `all amd64 arm64`.
+
+## 2026-09-09 — Phase 1 cont.: one-tag releases
+
+- `release.yml`: pushing a `v*` tag builds every package (amd64 + arch:all +
+  arm64 interpreter), streams them to the repo host over a locked-down
+  deploy key (forced command → `repo-publish.sh`), and attaches the `.deb`s
+  to a GitHub Release. Cutting a release is now `git tag vX.Y.Z && git push --tags`.
+- Cloudflare edge no longer caches apt metadata (dropped `Packages.gz`;
+  extensionless indexes are `cache-status: DYNAMIC`). arm64 `apt-get update`
+  verifies clean.
