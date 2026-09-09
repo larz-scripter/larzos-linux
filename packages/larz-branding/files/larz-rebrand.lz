@@ -1,0 +1,139 @@
+#!/usr/bin/env larzscript
+# larz-rebrand - stamp LarzOS identity over the base distro's, or undo it.
+#
+#   larz-rebrand apply     write LarzOS branding onto every identity surface
+#   larz-rebrand restore   put the originals back
+#   larz-rebrand status    show what is currently branded
+#
+# Data lives in /usr/share/larzos/branding/ (shipped by the larz-branding
+# package). Templates use @VERSION@ / @CODENAME@. Files that belong to another
+# package (os-release, issue, ...) are backed up as <path>.pre-larzos the first
+# time they are replaced, so `restore` is exact.
+
+let SRC = env("LARZOS_BRANDING_SRC", "/usr/share/larzos/branding")
+
+fn have(cmd) { return run("command -v " + cmd + " >/dev/null 2>&1") == 0 }
+
+fn version() {
+  let v = env("LARZOS_VERSION", "")
+  if v != "" { return v }
+  let q = capture("dpkg-query -W -f='${Version}' larz-branding 2>/dev/null").strip()
+  if q != "" { return q }
+  return "0.1"
+}
+fn codename() {
+  let c = env("LARZOS_CODENAME", "")
+  return c == "" ? "ledger" : c
+}
+
+fn render(name) {
+  let t = read_file(SRC + "/" + name)
+  return t.replace("@VERSION@", version()).replace("@CODENAME@", codename())
+}
+
+# Replace dst with `content`; keep a one-time .pre-larzos backup if dst is not
+# already ours and no backup exists yet.
+fn put(dst, content, mode) {
+  run("mkdir -p " + capture("dirname " + dst).strip())
+  let bak = dst + ".pre-larzos"
+  if file_exists(dst) and not file_exists(bak) {
+    let cur = read_file(dst)
+    if not cur.contains("LarzOS") { run("cp -a " + dst + " " + bak) }
+  }
+  write_file(dst, content)
+  if mode != "" { run("chmod " + mode + " " + dst) }
+}
+
+fn copy(src, dst, mode) {
+  run("mkdir -p " + capture("dirname " + dst).strip())
+  run("cp -f " + src + " " + dst)
+  if mode != "" { run("chmod " + mode + " " + dst) }
+}
+
+fn apply() {
+  # --- identity files tools read ---
+  put("/usr/lib/os-release", render("os-release"), "0644")
+  run("ln -sf ../usr/lib/os-release /etc/os-release")
+  put("/etc/issue",      render("issue"),      "0644")
+  put("/etc/issue.net",  render("issue.net"),  "0644")
+  put("/etc/lsb-release", render("lsb-release"), "0644")
+  put("/etc/motd",       read_file(SRC + "/motd"), "0644")
+  put("/etc/machine-info", read_file(SRC + "/machine-info"), "0644")
+
+  # --- login banner: drop the base motd scripts, keep only ours ---
+  for f in ["10-uname", "10-help-text", "50-motd-news", "50-landscape-sysinfo", "80-esm",
+            "80-livepatch", "85-fwupd", "90-updates-available", "91-contract-ua-esm-status",
+            "91-release-upgrade", "92-unattended-upgrades", "95-hwe-eol", "97-overlayroot",
+            "98-fsck-at-reboot", "98-reboot-required"] {
+    run("rm -f /etc/update-motd.d/" + f)
+  }
+  copy(SRC + "/00-larzos", "/etc/update-motd.d/00-larzos", "0755")
+
+  # --- boot chain ---
+  copy(SRC + "/grub-99-larzos.cfg", "/etc/default/grub.d/99-larzos.cfg", "0644")
+
+  # --- shell env ---
+  copy(SRC + "/profile-larzos.sh", "/etc/profile.d/larzos.sh", "0644")
+
+  # --- logo art (os-release LOGO=larzos, GNOME "About", fastfetch) ---
+  copy(SRC + "/larzos.svg", "/usr/share/pixmaps/larzos.svg", "0644")
+  copy(SRC + "/larzos.svg", "/usr/share/icons/hicolor/scalable/apps/larzos.svg", "0644")
+  copy(SRC + "/larzos.png", "/usr/share/pixmaps/larzos.png", "0644")
+
+  # --- plymouth theme (shipped always; activated only if plymouth is here) ---
+  run("mkdir -p /usr/share/plymouth/themes/larzos")
+  copy(SRC + "/plymouth/larzos.plymouth", "/usr/share/plymouth/themes/larzos/larzos.plymouth", "0644")
+  copy(SRC + "/plymouth/larzos.script",   "/usr/share/plymouth/themes/larzos/larzos.script", "0644")
+  copy(SRC + "/plymouth/logo.png",        "/usr/share/plymouth/themes/larzos/logo.png", "0644")
+
+  # --- dpkg vendor ---
+  copy(SRC + "/dpkg-origin-larzos", "/etc/dpkg/origins/larzos", "0644")
+  run("ln -sf larzos /etc/dpkg/origins/default")
+
+  # --- refresh derived state (all guarded / best-effort) ---
+  if have("plymouth-set-default-theme") and file_exists("/usr/share/plymouth/themes/larzos/larzos.plymouth") {
+    run("plymouth-set-default-theme larzos >/dev/null 2>&1 || true")
+  }
+  if have("update-grub") and file_exists("/boot/grub") {
+    run("update-grub >/dev/null 2>&1 || true")
+  }
+  if have("update-initramfs") and file_exists("/boot") {
+    run("update-initramfs -u >/dev/null 2>&1 || true")
+  }
+  print("larz-rebrand: LarzOS " + version() + " (" + codename() + ") - branding applied")
+}
+
+fn restore() {
+  for dst in ["/usr/lib/os-release", "/etc/issue", "/etc/issue.net", "/etc/lsb-release",
+              "/etc/motd", "/etc/machine-info"] {
+    let bak = dst + ".pre-larzos"
+    if file_exists(bak) { run("mv -f " + bak + " " + dst) }
+  }
+  run("ln -sf ../usr/lib/os-release /etc/os-release")
+  for f in ["/etc/update-motd.d/00-larzos", "/etc/default/grub.d/99-larzos.cfg",
+            "/etc/profile.d/larzos.sh", "/etc/dpkg/origins/larzos"] {
+    run("rm -f " + f)
+  }
+  run("ln -sf debian /etc/dpkg/origins/default 2>/dev/null || true")
+  if have("plymouth-set-default-theme") {
+    run("plymouth-set-default-theme -R text >/dev/null 2>&1 || true")
+  }
+  if have("update-grub") and file_exists("/boot/grub") { run("update-grub >/dev/null 2>&1 || true") }
+  print("larz-rebrand: originals restored")
+}
+
+fn status() {
+  let os = file_exists("/usr/lib/os-release") ? read_file("/usr/lib/os-release") : ""
+  print("os-release : " + (os.contains("ID=larzos") ? "LarzOS" : "not branded"))
+  print("issue      : " + ((file_exists("/etc/issue") and read_file("/etc/issue").contains("LarzOS")) ? "LarzOS" : "not branded"))
+  print("motd hook  : " + (file_exists("/etc/update-motd.d/00-larzos") ? "present" : "missing"))
+  print("grub       : " + (file_exists("/etc/default/grub.d/99-larzos.cfg") ? "LarzOS" : "not branded"))
+  print("dpkg vendor: " + capture("sh -c 'dpkg-vendor --query Vendor 2>/dev/null || readlink /etc/dpkg/origins/default'").strip())
+  print("plymouth   : " + (have("plymouth-set-default-theme") ? capture("plymouth-set-default-theme 2>/dev/null").strip() : "n/a"))
+}
+
+let cmd = len(args) > 0 ? args[0] : "status"
+if cmd == "apply" { apply() }
+else if cmd == "restore" { restore() }
+else if cmd == "status" { status() }
+else { print("usage: larz-rebrand apply|restore|status"); exit(1) }

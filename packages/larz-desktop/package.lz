@@ -12,6 +12,8 @@ pkg.package({
   "arch":       "all",
   "section":    "metapackages",
   "depends": [
+    "larz-branding",
+    "larz",
     "larzsh",
     "larz-ai",
     "larz-system",

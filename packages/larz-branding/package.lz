@@ -1,0 +1,38 @@
+# larz-branding - makes the machine present as LarzOS, not the base distro.
+#
+# Ships the LarzOS identity for every surface a user sees - os-release, issue,
+# the login MOTD, GRUB, a Plymouth theme, the dpkg vendor, the logo - plus
+# `larz-rebrand`, the tool that stamps them on (postinst) and takes them off
+# again (prerm). Linux and Debian stay underneath; they just stop being what
+# the user reads.
+
+import "larzos/pkg" as pkg
+
+pkg.package({
+  "name":     "larz-branding",
+  "version":  "0.1.0",
+  "summary":  "LarzOS identity - os-release, MOTD, GRUB, Plymouth, logo, dpkg vendor",
+  "arch":     "all",
+  "section":  "misc",
+  "depends":  ["larzscript"],
+  "scripts":  {"postinst": "files/postinst", "prerm": "files/prerm"},
+  "install": [
+    "install -Dm755 files/larz-rebrand.lz $DESTDIR/usr/lib/larzos/larz-rebrand.lz",
+    "install -Dm755 files/larz-rebrand    $DESTDIR/usr/bin/larz-rebrand",
+    "install -Dm644 files/brand/os-release    $DESTDIR/usr/share/larzos/branding/os-release",
+    "install -Dm644 files/brand/issue         $DESTDIR/usr/share/larzos/branding/issue",
+    "install -Dm644 files/brand/issue.net     $DESTDIR/usr/share/larzos/branding/issue.net",
+    "install -Dm644 files/brand/lsb-release   $DESTDIR/usr/share/larzos/branding/lsb-release",
+    "install -Dm644 files/brand/motd          $DESTDIR/usr/share/larzos/branding/motd",
+    "install -Dm644 files/brand/machine-info  $DESTDIR/usr/share/larzos/branding/machine-info",
+    "install -Dm755 files/brand/00-larzos     $DESTDIR/usr/share/larzos/branding/00-larzos",
+    "install -Dm644 files/brand/grub-99-larzos.cfg $DESTDIR/usr/share/larzos/branding/grub-99-larzos.cfg",
+    "install -Dm644 files/brand/profile-larzos.sh  $DESTDIR/usr/share/larzos/branding/profile-larzos.sh",
+    "install -Dm644 files/brand/dpkg-origin-larzos $DESTDIR/usr/share/larzos/branding/dpkg-origin-larzos",
+    "install -Dm644 files/art/larzos.svg      $DESTDIR/usr/share/larzos/branding/larzos.svg",
+    "install -Dm644 files/art/larzos.png      $DESTDIR/usr/share/larzos/branding/larzos.png",
+    "install -Dm644 files/plymouth/larzos.plymouth $DESTDIR/usr/share/larzos/branding/plymouth/larzos.plymouth",
+    "install -Dm644 files/plymouth/larzos.script   $DESTDIR/usr/share/larzos/branding/plymouth/larzos.script",
+    "install -Dm644 files/plymouth/logo.png        $DESTDIR/usr/share/larzos/branding/plymouth/logo.png",
+  ],
+})

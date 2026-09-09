@@ -1,0 +1,8 @@
+[Plymouth Theme]
+Name=LarzOS
+Description=LarzOS boot splash
+ModuleName=script
+
+[script]
+ImageDir=/usr/share/plymouth/themes/larzos
+ScriptFile=/usr/share/plymouth/themes/larzos/larzos.script

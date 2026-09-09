@@ -1,0 +1,23 @@
+# bash completion for larz
+_larz() {
+    local cur prev verbs
+    COMPREPLY=()
+    cur="${COMP_WORDS[COMP_CWORD]}"
+    prev="${COMP_WORDS[COMP_CWORD-1]}"
+    verbs="install remove search update upgrade list plan apply rollback status ai doctor rebrand version apt help"
+    if [ "$COMP_CWORD" -eq 1 ]; then
+        COMPREPLY=( $(compgen -W "$verbs" -- "$cur") )
+        return
+    fi
+    case "${COMP_WORDS[1]}" in
+        install|remove|search)
+            COMPREPLY=( $(compgen -W "$(apt-cache --no-generate pkgnames "$cur" 2>/dev/null)" -- "$cur") ) ;;
+        plan|apply)
+            COMPREPLY=( $(compgen -f -- "$cur") ) ;;
+        ai)
+            [ "$COMP_CWORD" -eq 2 ] && COMPREPLY=( $(compgen -W "route models serve health chat" -- "$cur") ) ;;
+        rebrand)
+            [ "$COMP_CWORD" -eq 2 ] && COMPREPLY=( $(compgen -W "apply restore status" -- "$cur") ) ;;
+    esac
+}
+complete -F _larz larz

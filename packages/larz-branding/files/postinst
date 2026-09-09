@@ -1,0 +1,11 @@
+#!/bin/sh
+set -e
+case "$1" in
+  configure)
+    if command -v larzscript >/dev/null 2>&1; then
+      LARZSCRIPT_PATH=/usr/lib/larzos larzscript /usr/lib/larzos/larz-rebrand.lz apply \
+        || echo "larz-branding: rebrand apply reported a problem (continuing)"
+    fi
+    ;;
+esac
+exit 0

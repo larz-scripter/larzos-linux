@@ -1,0 +1,14 @@
+PRETTY_NAME="LarzOS @VERSION@"
+NAME="LarzOS"
+VERSION="@VERSION@ (@CODENAME@)"
+VERSION_ID="@VERSION@"
+VERSION_CODENAME=@CODENAME@
+ID=larzos
+ID_LIKE=debian
+HOME_URL="https://larzos.com/"
+DOCUMENTATION_URL="https://larzos.com/larzos-linux/"
+SUPPORT_URL="https://larzos.com/larzos-linux/"
+BUG_REPORT_URL="https://github.com/larz-scripter/larzos-linux/issues"
+PRIVACY_POLICY_URL="https://larzos.com/privacy"
+LOGO=larzos
+ANSI_COLOR="1;36"

@@ -1,0 +1,17 @@
+#!/bin/sh
+# LarzOS message of the day. Replaces the base distro's motd scripts.
+. /etc/os-release 2>/dev/null || PRETTY_NAME="LarzOS"
+
+c='\033[1;36m'; d='\033[0;90m'; r='\033[0m'
+printf '\n'
+printf " ${c}  \\\\      ${r}%s\n" "$PRETTY_NAME"
+printf " ${c}   \\\\     ${d}%s${r}\n" "$(uname -sr)"
+printf " ${c}   /\\\\     ${r}\n"
+printf " ${c}  /  \\\\    ${d}your machine:${r}  /etc/larzos/system.lz\n"
+printf " ${c} /    \\\\   ${d}change it:${r}     larz plan  ->  sudo larz apply\n"
+printf '\n'
+
+u=/var/lib/larzos/updates
+if [ -r "$u" ] && [ "$(cat "$u" 2>/dev/null)" -gt 0 ] 2>/dev/null; then
+  printf " ${d}%s package update(s) available:${r}  larz upgrade\n\n" "$(cat "$u")"
+fi

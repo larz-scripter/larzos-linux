@@ -1,0 +1,22 @@
+# branding module - keep the machine presenting as LarzOS, not the base
+# distro. The heavy lifting lives in `larz-rebrand` (from the larz-branding
+# package); this module just re-asserts it so a `larz-system apply` is
+# self-healing after an upstream package upgrade rewrites /etc/os-release etc.
+
+let id = "branding"
+let title = "LarzOS identity"
+
+fn plan(spec, ctx) {
+  if not spec["branding"] {
+    return [{"desc": "branding disabled in this spec", "cmd": "", "skip": true}]
+  }
+  let os = file_exists("/usr/lib/os-release") ? read_file("/usr/lib/os-release") : ""
+  let hook = file_exists("/etc/update-motd.d/00-larzos")
+  if os.contains("ID=larzos") and hook {
+    return [{"desc": "presents as LarzOS", "cmd": "", "skip": true}]
+  }
+  if capture("command -v larz-rebrand || true").strip() == "" {
+    return [{"desc": "install larz-branding for the LarzOS identity", "cmd": "", "skip": true}]
+  }
+  return [{"desc": "stamp LarzOS identity (larz-rebrand apply)", "cmd": "larz-rebrand apply", "skip": false}]
+}

@@ -1,0 +1,10 @@
+#!/bin/sh
+set -e
+case "$1" in
+  remove|deconfigure)
+    if [ -x /usr/lib/larzos/larz-rebrand.lz ] && command -v larzscript >/dev/null 2>&1; then
+      LARZSCRIPT_PATH=/usr/lib/larzos larzscript /usr/lib/larzos/larz-rebrand.lz restore || true
+    fi
+    ;;
+esac
+exit 0

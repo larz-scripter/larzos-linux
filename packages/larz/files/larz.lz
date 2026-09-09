@@ -1,0 +1,186 @@
+#!/usr/bin/env larzscript
+# larz - the LarzOS command. One verb for the whole machine: packages, the
+# system spec, the AI router, health. Everything underneath (apt, systemd,
+# larz-system, larz-aid) stays available but you rarely need to name it.
+
+import "json" as json
+
+fn sh(cmd) { return run(cmd) }
+fn out(cmd) { return capture(cmd).strip() }
+fn is_root() { return out("id -u") == "0" }
+fn sudo() { return is_root() ? "" : "sudo " }
+
+fn q(s) { return "'" + s.replace("'", "'\\''") + "'" }
+fn qjoin(xs) {
+  let r = ""
+  for i in range(len(xs)) { r = r + (i > 0 ? " " : "") + q(xs[i]) }
+  return r
+}
+
+let C = "\033[1;36m"
+let D = "\033[0;90m"
+let R = "\033[0m"
+fn head(s) { print(C + "==>" + R + " " + s) }
+
+fn osfield(k) {
+  let line = out("sh -c '. /etc/os-release 2>/dev/null; printf %s \"$" + k + "\"'")
+  return line
+}
+
+fn banner() {
+  let name = osfield("PRETTY_NAME")
+  if name == "" { name = "LarzOS" }
+  print(C + name + R)
+  print(D + out("uname -sr") + "  -  " + out("uname -m") + R)
+}
+
+fn need(cmd) {
+  if sh("command -v " + cmd + " >/dev/null 2>&1") != 0 {
+    print("larz: '" + cmd + "' is not installed"); exit(1)
+  }
+}
+
+fn usage() {
+  banner()
+  print("")
+  print("  larz " + C + "install" + R + " <pkg>...     add software")
+  print("  larz " + C + "remove" + R + "  <pkg>...     remove software")
+  print("  larz " + C + "search" + R + "  <text>       find software")
+  print("  larz " + C + "update" + R + "               refresh the package lists")
+  print("  larz " + C + "upgrade" + R + "              update everything installed")
+  print("  larz " + C + "list" + R + "                 list installed packages")
+  print("")
+  print("  larz " + C + "plan" + R + "   [system.lz]   preview changes to this machine")
+  print("  larz " + C + "apply" + R + "  [system.lz]   converge onto the spec")
+  print("  larz " + C + "rollback" + R + "             undo the last apply")
+  print("  larz " + C + "status" + R + "               drift + summary")
+  print("")
+  print("  larz " + C + "ai" + R + " <text>            ask the model router (larz-aid)")
+  print("  larz " + C + "ai route <task>" + R + "      which backend serves <task>")
+  print("  larz " + C + "doctor" + R + "               check the system over")
+  print("  larz " + C + "rebrand" + R + " [status]     re-assert LarzOS identity")
+  print("  larz " + C + "version" + R + "              versions")
+  print("")
+  print(D + "  escape hatch:  larz apt <args>   ->   apt-get <args>" + R)
+}
+
+fn row(state, label, detail) {
+  let tag = state == "ok"   ? C + "ok  " + R :
+            state == "warn" ? "\033[1;33mwarn\033[0m" :
+            state == "fail" ? "\033[1;31mfail\033[0m" : D + "--  " + R
+  print("  " + tag + "  " + label + "  " + detail)
+}
+
+fn doctor() {
+  banner(); print("")
+  let branded = osfield("ID") == "larzos"
+  row(branded ? "ok" : "fail", "identity ", branded ? "presents as LarzOS" : "NOT branded - run: sudo larz rebrand apply")
+
+  let eng = sh("command -v larz-system >/dev/null 2>&1") == 0
+  row(eng ? "ok" : "fail", "engine   ", eng ? out("larz-system version") : "larz-system missing")
+
+  let h = out("curl -s --max-time 2 http://127.0.0.1:8199/health")
+  row(h.contains("\"ok\"") ? "ok" : "info", "ai router", h == "" ? "not running (larz ai serve &)" : h)
+
+  let srcs = out("sh -c 'cat /etc/apt/sources.list /etc/apt/sources.list.d/*.list /etc/apt/sources.list.d/*.sources 2>/dev/null | grep -cE \"^(deb|Types:)\"'")
+  row(srcs == "0" ? "warn" : "ok", "packages ", srcs + " apt source(s) configured")
+
+  row("info", "disk     ", out("df -h / | awk 'NR==2{print $4\" free of \"$2}'"))
+
+  let f = out("sh -c 'systemctl --failed --no-legend --plain 2>/dev/null | wc -l'")
+  row(f == "0" ? "ok" : "warn", "services ", f + " failed unit(s)")
+}
+
+fn count_updates() {
+  # best-effort: number of upgradable packages
+  let n = out("sh -c 'apt-get -s -o Debug::NoLocking=true upgrade 2>/dev/null | grep -c ^Inst'")
+  sh(sudo() + "sh -c 'mkdir -p /var/lib/larzos; echo " + q(n) + " > /var/lib/larzos/updates' 2>/dev/null")
+  return n
+}
+
+let a = args
+if len(a) == 0 { usage(); exit(0) }
+let cmd = a[0]
+let rest = a[1:]
+
+if cmd == "help" or cmd == "-h" or cmd == "--help" { usage() }
+
+else if cmd == "install" or cmd == "add" {
+  if len(rest) == 0 { print("larz install <pkg>..."); exit(1) }
+  need("apt-get")
+  head("installing " + join(rest, " "))
+  exit(sh(sudo() + "apt-get install -y " + qjoin(rest)))
+}
+else if cmd == "remove" or cmd == "rm" {
+  if len(rest) == 0 { print("larz remove <pkg>..."); exit(1) }
+  need("apt-get")
+  head("removing " + join(rest, " "))
+  exit(sh(sudo() + "apt-get remove -y " + qjoin(rest)))
+}
+else if cmd == "search" or cmd == "find" {
+  if len(rest) == 0 { print("larz search <text>"); exit(1) }
+  need("apt-cache")
+  exit(sh("apt-cache search " + qjoin(rest)))
+}
+else if cmd == "update" or cmd == "refresh" {
+  need("apt-get")
+  head("refreshing package lists")
+  let rc = sh(sudo() + "apt-get update")
+  count_updates()
+  exit(rc)
+}
+else if cmd == "upgrade" or cmd == "up" {
+  need("apt-get")
+  head("updating everything installed")
+  sh(sudo() + "apt-get update")
+  let rc = sh(sudo() + "apt-get full-upgrade -y")
+  count_updates()
+  exit(rc)
+}
+else if cmd == "list" {
+  exit(sh("dpkg-query -W -f='${Package}\t${Version}\n' | sort"))
+}
+else if cmd == "plan" {
+  need("larz-system")
+  exit(sh("larz-system plan " + qjoin(rest)))
+}
+else if cmd == "apply" {
+  need("larz-system")
+  head("applying the system spec")
+  exit(sh(sudo() + "larz-system apply " + qjoin(rest)))
+}
+else if cmd == "rollback" {
+  need("larz-system")
+  exit(sh(sudo() + "larz-system rollback " + qjoin(rest)))
+}
+else if cmd == "status" {
+  need("larz-system")
+  exit(sh("larz-system status " + qjoin(rest)))
+}
+else if cmd == "ai" {
+  need("larz-aid")
+  if len(rest) == 0 { print("larz ai <text>   |   larz ai route <task>   |   larz ai serve"); exit(1) }
+  exit(sh("larz-aid " + qjoin(rest)))
+}
+else if cmd == "rebrand" {
+  need("larz-rebrand")
+  let sub = len(rest) > 0 ? rest : ["status"]
+  let w = (sub[0] == "status") ? "" : sudo()
+  exit(sh(w + "larz-rebrand " + qjoin(sub)))
+}
+else if cmd == "doctor" or cmd == "check" { doctor() }
+else if cmd == "version" or cmd == "--version" {
+  banner()
+  for p in ["larzscript", "larz-system", "larz-ai", "larzsh", "larz-branding"] {
+    let v = out("dpkg-query -W -f='${Version}' " + p + " 2>/dev/null")
+    if v != "" { print("  " + p + " " + v) }
+  }
+}
+else if cmd == "apt" {
+  need("apt-get")
+  exit(sh(sudo() + "apt-get " + qjoin(rest)))
+}
+else {
+  print("larz: unknown command '" + cmd + "'  (try: larz help)")
+  exit(1)
+}

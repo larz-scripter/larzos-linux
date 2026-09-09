@@ -51,6 +51,7 @@ fn _norm_ai(ai) {
 fn system(spec) {
   _require(type(spec) == "dict", "larzos.system(...) expects a table")
 
+  _default(spec, "branding", true)
   _default(spec, "hostname", "larzbox")
   _default(spec, "timezone", "UTC")
   _default(spec, "locale", "en_US.UTF-8")
@@ -75,6 +76,7 @@ fn system(spec) {
 
   let out = {
     "spec_version": SPEC_VERSION,
+    "branding": spec["branding"],
     "hostname": spec["hostname"],
     "timezone": spec["timezone"],
     "locale": spec["locale"],

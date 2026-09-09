@@ -1,0 +1,20 @@
+# larz - the LarzOS command. One verb for the whole machine: packages, the
+# system spec (larz-system), the AI router (larz-aid), health. The tools it
+# fronts stay usable directly; most users never need to.
+
+import "larzos/pkg" as pkg
+
+pkg.package({
+  "name":     "larz",
+  "version":  "0.1.0",
+  "summary":  "The LarzOS command - packages, system spec, AI router, health",
+  "arch":     "all",
+  "section":  "admin",
+  "depends":  ["larzscript", "larz-system"],
+  "install": [
+    "install -Dm755 files/larz.lz $DESTDIR/usr/lib/larzos/larz.lz",
+    "install -Dm755 files/larz    $DESTDIR/usr/bin/larz",
+    "install -Dm644 files/larz.bash-completion $DESTDIR/usr/share/bash-completion/completions/larz",
+    "install -Dm644 files/larz.1  $DESTDIR/usr/share/man/man1/larz.1",
+  ],
+})

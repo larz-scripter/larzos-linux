@@ -47,6 +47,16 @@ if cmd == "list" {
   if d.has("conffiles") and len(d["conffiles"]) > 0 {
     write_file(stage + "/DEBIAN/conffiles", join(d["conffiles"], "\n") + "\n")
   }
+  if d.has("scripts") {
+    for name in ["preinst", "postinst", "prerm", "postrm", "triggers"] {
+      if d["scripts"].has(name) {
+        let m = name == "triggers" ? "0644" : "0755"
+        if run("install -m " + m + " " + src + "/" + d["scripts"][name] + " " + stage + "/DEBIAN/" + name) != 0 {
+          die("could not stage DEBIAN/" + name)
+        }
+      }
+    }
+  }
 
   for line in d["build"] {
     print("build: " + line)

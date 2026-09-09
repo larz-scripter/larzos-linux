@@ -1,0 +1,73 @@
+.TH LARZ 1 "LarzOS" "LarzOS" "LarzOS Manual"
+.SH NAME
+larz \- the LarzOS command
+.SH SYNOPSIS
+.B larz
+.I verb
+.RI [ args ]
+.SH DESCRIPTION
+.B larz
+is the single entry point for running a LarzOS machine: installing software,
+previewing and applying the system spec
+.RI ( /etc/larzos/system.lz ),
+talking to the AI model router, and checking the system over. It is a thin,
+LarzOS\-styled front end to
+.BR apt\-get (8),
+.BR larz-system (8)
+and
+.BR larz-aid (8),
+which all remain usable directly.
+.SH VERBS
+.TP
+.B install " \fIpkg\fR..."
+Install packages.
+.TP
+.B remove " \fIpkg\fR..."
+Remove packages.
+.TP
+.B search " \fItext\fR"
+Search available packages.
+.TP
+.B update
+Refresh the package lists.
+.TP
+.B upgrade
+Update every installed package.
+.TP
+.B list
+List installed packages.
+.TP
+.B plan " [\fIsystem.lz\fR]"
+Show what applying the spec would change. Touches nothing.
+.TP
+.B apply " [\fIsystem.lz\fR]"
+Converge the machine onto the spec.
+.TP
+.B rollback
+Re\-apply the previous spec.
+.TP
+.B status
+Drift and a one\-line summary.
+.TP
+.B ai " \fItext\fR"
+Ask the model router. \fBlarz ai route \fItask\fR reports which backend serves a task.
+.TP
+.B doctor
+Check identity, engine, AI router, package sources, disk and services.
+.TP
+.B rebrand " [status|apply|restore]"
+Re\-assert (or remove) the LarzOS identity.
+.TP
+.B version
+Show component versions.
+.TP
+.B apt " \fIargs\fR"
+Pass \fIargs\fR straight to \fBapt\-get\fR.
+.SH FILES
+.TP
+.I /etc/larzos/system.lz
+The machine, described in Larzscript.
+.SH SEE ALSO
+.BR larz-system (8),
+.BR larz-aid (8),
+.BR larz-rebrand (8)
