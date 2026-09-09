@@ -2,6 +2,29 @@
 
 Newest first. Mirrored to <https://larzos.com/larzos-linux/>.
 
+## 2026-09-09 - it presents as LarzOS; base is Debian
+
+- **Standardized on Debian stable** as the base (was: Ubuntu/casper ISO +
+  Debian Termux container). Debian is built to be rebranded and has far fewer
+  vendor ad/nag surfaces. `build-rootfs.sh` -> debootstrap trixie;
+  `build-iso.sh` -> the Debian live stack (live-boot + live-config), no casper.
+- **`larz-branding`** package - the LarzOS identity for every surface a user
+  sees: `os-release` / `lsb-release` / `/etc/issue`, the login MOTD (drops the
+  base distro's motd.d scripts for one LarzOS banner), GRUB distributor, a
+  Plymouth theme, the dpkg vendor, the logo. `larz-rebrand` applies it
+  (package postinst) and restores the originals (prerm). Verified on
+  debian:trixie: install -> presents as LarzOS; remove -> exact restore.
+  A `branding` module in `larz-system` re-asserts it on every apply, so an
+  upstream package upgrade that rewrites os-release self-heals.
+- **`larz`** - one command for the whole machine: `install`/`remove`/`search`/
+  `update`/`upgrade` (over apt), `plan`/`apply`/`rollback`/`status` (over
+  larz-system), `ai` (over larz-aid), `doctor`, `rebrand`, `version`. Bash
+  completion + man page. Users never type `apt` or `systemctl`.
+- `tools/check-branding.sh` - fails a build whose rootfs still presents as the
+  base distro; wired into `build-rootfs.sh` and `build-iso.sh`.
+- `larz-pkg` / `pkg.lz` gained DEBIAN maintainer-script support (`scripts`
+  field). `larz-desktop` depends on `larz-branding` + `larz`.
+
 ## 2026-09-09 - lean ISO boots; Termux edition
 
 - **Lean live ISO (128 MB) boots end to end on real VirtualBox 7.2** (PC2):

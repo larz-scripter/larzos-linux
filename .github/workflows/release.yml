@@ -38,6 +38,8 @@ jobs:
       - name: Build the rootfs image (shared base for WSL / Docker / ISO)
         if: startsWith(github.ref, 'refs/tags/')
         run: |
+          sudo apt-get update
+          sudo apt-get install -y debootstrap debian-archive-keyring
           V="${GITHUB_REF_NAME#v}"
           sudo OUT="dist/larzos-rootfs-amd64-$V.tar.gz" LARZOS_APT_BASE=https://larzos.com/apt \
             sh tools/build-rootfs.sh
