@@ -1,0 +1,29 @@
+# packages module - converge installed packages onto spec.packages.
+#
+# Resolves each name against the LarzOS apt repo first (packages built from
+# packages/<name>/package.lz), then the base distro. Phase 0 shells out to
+# apt-get; it does not remove packages that fall out of the list yet.
+
+let id = "packages"
+let title = "Packages"
+
+fn _installed(name) {
+  let s = capture("dpkg-query -W -f='${Status}' " + name + " 2>/dev/null").strip()
+  return s.contains("install ok installed")
+}
+
+fn plan(spec, ctx) {
+  let missing = []
+  for name in spec["packages"] {
+    if not _installed(name) { missing.push(name) }
+  }
+  if len(missing) == 0 {
+    return [{"desc": str(len(spec["packages"])) + " packages already installed", "cmd": "", "skip": true}]
+  }
+  let list = ""
+  for m in missing { list = list + " " + m }
+  return [
+    {"desc": "apt-get update", "cmd": "apt-get update -qq", "skip": false},
+    {"desc": "install:" + list, "cmd": "DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends" + list, "skip": false},
+  ]
+}

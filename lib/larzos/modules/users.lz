@@ -1,0 +1,46 @@
+# users module - create accounts, set shells, manage group membership.
+# Never deletes users; unmanaged accounts are left alone.
+
+let id = "users"
+let title = "Users"
+
+fn _exists(name) {
+  return capture("id -u " + name + " 2>/dev/null").strip() != ""
+}
+
+fn plan(spec, ctx) {
+  let actions = []
+  for u in spec["users"] {
+    let name = u["name"]
+    if not _exists(name) {
+      actions.push({
+        "desc": "create user " + name + " (shell " + u["shell"] + ")",
+        "cmd": "useradd -m -s " + u["shell"] + " " + name,
+        "skip": false,
+      })
+    } else {
+      let have_shell = capture("getent passwd " + name + " | cut -d: -f7").strip()
+      if have_shell != u["shell"] {
+        actions.push({
+          "desc": "set shell for " + name + " -> " + u["shell"],
+          "cmd": "usermod -s " + u["shell"] + " " + name,
+          "skip": false,
+        })
+      }
+    }
+    for g in u["groups"] {
+      let inG = capture("id -nG " + name + " 2>/dev/null").strip()
+      if not (" " + inG + " ").contains(" " + g + " ") {
+        actions.push({
+          "desc": "add " + name + " to group " + g,
+          "cmd": "usermod -aG " + g + " " + name,
+          "skip": false,
+        })
+      }
+    }
+  }
+  if len(actions) == 0 {
+    return [{"desc": "all managed users match", "cmd": "", "skip": true}]
+  }
+  return actions
+}

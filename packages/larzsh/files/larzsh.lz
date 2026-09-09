@@ -1,0 +1,46 @@
+# larzsh.lz - the LarzOS interactive shell (Linux-host edition).
+#
+# A small shell whose builtins are Larzscript. Unknown commands fall
+# through to the system PATH, so it is a usable everyday shell today while
+# the builtin set grows. The bare-metal edition shares this design but
+# dispatches unknown words to imported .lz packages instead of execing.
+
+fn prompt() {
+  let u = capture("id -un").strip()
+  let h = capture("hostname -s").strip()
+  let d = capture("pwd").strip()
+  return u + "@" + h + ":" + d + " larz$ "
+}
+
+fn builtin(cmd, rest) {
+  if cmd == "cd" {
+    let dir = len(rest) >= 1 ? rest[0] : env("HOME", "/")
+    chdir(dir)
+    return true
+  }
+  if cmd == "pwd"    { print(capture("pwd").strip()); return true }
+  if cmd == "help" {
+    print("larzsh builtins: cd  pwd  help  about  exit")
+    print("anything else runs from PATH.")
+    return true
+  }
+  if cmd == "about" {
+    print("LarzOS shell - written in Larzscript. https://larzos.com/larzos-linux/")
+    return true
+  }
+  if cmd == "exit" { exit(len(rest) >= 1 ? int(rest[0]) : 0) }
+  return false
+}
+
+print("LarzOS shell (larzsh) - type 'help'")
+while true {
+  let line = input(prompt())
+  if line == nil { print(""); break }
+  let parts = [p for p in line.strip().split(" ") if p != ""]
+  if len(parts) == 0 { continue }
+  let cmd = parts[0]
+  let rest = parts[1:]
+  if not builtin(cmd, rest) {
+    run(line)
+  }
+}

@@ -1,0 +1,59 @@
+# larzos/pkg - the package-definition DSL.
+#
+# packages/<name>/package.lz calls package({...}). Like a spec file, it is
+# ordinary Larzscript; larz-pkg reads the result back as JSON via
+# $LARZOS_PKG_OUT and turns it into a Debian binary package.
+#
+# Fields:
+#   name, version, summary   (required)
+#   arch        "all" | "amd64" | "arm64"      (default "all")
+#   maintainer                                  (default the project address)
+#   depends     list of package names           (default [])
+#   section     apt section                     (default "misc")
+#   build       shell lines run in the source dir before packaging
+#   install     shell lines that populate $DESTDIR (the staged root)
+
+import "json" as json
+
+fn _req(d, k) {
+  if not d.has(k) { throw {"type": "PkgError", "message": "package is missing '" + k + "'"} }
+}
+
+fn package(def) {
+  _req(def, "name")
+  _req(def, "version")
+  _req(def, "summary")
+
+  if not def.has("arch")       { def["arch"] = "all" }
+  if not def.has("maintainer") { def["maintainer"] = "Larz Scripter <larz@larzos.com>" }
+  if not def.has("depends")    { def["depends"] = [] }
+  if not def.has("section")    { def["section"] = "misc" }
+  if not def.has("build")      { def["build"] = [] }
+  if not def.has("install")    { def["install"] = [] }
+
+  let dest = env("LARZOS_PKG_OUT", "")
+  if dest == "" {
+    print(json.pretty(def))
+  } else {
+    write_file(dest, json.stringify(def))
+  }
+  return def
+}
+
+# Render the DEBIAN/control file for a package definition.
+fn control(def) {
+  let deps = ""
+  for i in range(len(def["depends"])) {
+    if i > 0 { deps = deps + ", " }
+    deps = deps + def["depends"][i]
+  }
+  let c = "Package: " + def["name"] + "\n" +
+          "Version: " + def["version"] + "\n" +
+          "Architecture: " + def["arch"] + "\n" +
+          "Maintainer: " + def["maintainer"] + "\n" +
+          "Section: " + def["section"] + "\n" +
+          "Priority: optional\n"
+  if deps != "" { c = c + "Depends: " + deps + "\n" }
+  c = c + "Description: " + def["summary"] + "\n"
+  return c
+}

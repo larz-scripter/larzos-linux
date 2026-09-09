@@ -1,0 +1,19 @@
+# larzsh - LarzOS login shell. Phase 0 ships the interpreter plus a thin
+# /usr/bin/larzsh that starts the interactive Larzscript OS shell (the same
+# os/larzsh.lz that runs on the bare-metal build, adapted for a Linux host).
+
+import "larzos/pkg" as pkg
+
+pkg.package({
+  "name":       "larzsh",
+  "version":    "0.1.0",
+  "summary":    "LarzOS interactive shell, written in Larzscript",
+  "arch":       "all",
+  "section":    "shells",
+  "depends":    ["larzscript"],
+  "build":      [],
+  "install": [
+    "install -Dm755 files/larzsh $DESTDIR/usr/bin/larzsh",
+    "install -Dm644 files/larzsh.lz $DESTDIR/usr/lib/larzos/larzsh.lz",
+  ],
+})

@@ -1,0 +1,23 @@
+name: ci
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Larzscript
+        run: |
+          curl -fsSL https://github.com/larz-scripter/larzscript/releases/latest/download/larzscript-linux-x86_64 -o /usr/local/bin/larzscript
+          chmod +x /usr/local/bin/larzscript
+          larzscript --version
+
+      - name: Syntax check + smoke test
+        run: make test
+
+      - name: Build packages
+        run: make packages && ls -la dist/

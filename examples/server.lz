@@ -1,0 +1,30 @@
+# server.lz - a headless LarzOS server. No desktop, no pro-audio, SSH only.
+
+import "larzos" as larzos
+
+let hostname = env("LARZOS_HOSTNAME", "larz-server-1")
+
+larzos.system({
+  "hostname": hostname,
+  "timezone": "UTC",
+
+  "users": [
+    { "name": "deploy", "groups": ["sudo"], "shell": "/usr/bin/larzsh" },
+  ],
+
+  "packages": ["larzsh", "larz-ai", "git", "curl", "ufw", "fail2ban"],
+
+  "services": {
+    "ssh":      "enabled",
+    "ufw":      "enabled",
+    "fail2ban": "enabled",
+    "larz-ai":  "enabled",
+  },
+
+  "audio": { "profile": "off" },
+
+  "ai": {
+    "local_models": [],
+    "gateway":      "https://gateway.larzpay.com",
+  },
+})

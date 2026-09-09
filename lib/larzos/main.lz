@@ -1,0 +1,95 @@
+# larzos - the module a system.lz spec file imports.
+#
+# A system.lz file describes a whole machine as a Larzscript value and hands
+# it to larzos.system(...). This module normalizes it (fills defaults,
+# validates shape) and writes the canonical spec as JSON to the path in
+# $LARZOS_SPEC_OUT, where `larz-system` picks it up. Evaluating the spec and
+# realizing it are kept separate on purpose: the spec file is ordinary
+# Larzscript - it can compute values, branch on the host, import helpers -
+# and it never touches the system itself.
+
+import "json" as json
+
+let SPEC_VERSION = 1
+
+fn _require(cond, msg) {
+  if not cond { throw {"type": "SpecError", "message": msg} }
+}
+
+fn _default(d, key, val) {
+  if not d.has(key) { d[key] = val }
+  return d
+}
+
+# Normalize one user entry into a full record.
+fn _norm_user(u) {
+  _require(type(u) == "dict", "each users[] entry must be a table")
+  _require(u.has("name"), "a users[] entry is missing 'name'")
+  _default(u, "groups", [])
+  _default(u, "shell", "/bin/bash")
+  _default(u, "sudo", false)
+  if u["groups"].contains("sudo") { u["sudo"] = true }
+  return u
+}
+
+fn _norm_audio(a) {
+  _default(a, "profile", "desktop")   # pro | desktop | off
+  _default(a, "rate", 48000)
+  _default(a, "quantum", 1024)
+  _require(["pro", "desktop", "off"].contains(a["profile"]),
+           "audio.profile must be pro, desktop or off")
+  return a
+}
+
+fn _norm_ai(ai) {
+  _default(ai, "local_models", [])
+  _default(ai, "gateway", "")
+  return ai
+}
+
+# The one entry point a system.lz calls.
+fn system(spec) {
+  _require(type(spec) == "dict", "larzos.system(...) expects a table")
+
+  _default(spec, "hostname", "larzbox")
+  _default(spec, "timezone", "UTC")
+  _default(spec, "locale", "en_US.UTF-8")
+  _default(spec, "users", [])
+  _default(spec, "packages", [])
+  _default(spec, "services", {})
+  _default(spec, "audio", {})
+  _default(spec, "ai", {})
+
+  let users = []
+  for u in spec["users"] { users.push(_norm_user(u)) }
+  spec["users"] = users
+  spec["audio"] = _norm_audio(spec["audio"])
+  spec["ai"] = _norm_ai(spec["ai"])
+
+  for name in keys(spec["services"]) {
+    let v = spec["services"][name]
+    _require(["enabled", "disabled"].contains(v),
+             "service '" + name + "' must be 'enabled' or 'disabled'")
+  }
+
+  let out = {
+    "spec_version": SPEC_VERSION,
+    "hostname": spec["hostname"],
+    "timezone": spec["timezone"],
+    "locale": spec["locale"],
+    "users": spec["users"],
+    "packages": spec["packages"],
+    "services": spec["services"],
+    "audio": spec["audio"],
+    "ai": spec["ai"],
+  }
+
+  let dest = env("LARZOS_SPEC_OUT", "")
+  if dest == "" {
+    # Run directly (not via larz-system): just show what was parsed.
+    print(json.pretty(out))
+  } else {
+    write_file(dest, json.stringify(out))
+  }
+  return out
+}

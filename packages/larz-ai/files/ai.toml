@@ -1,0 +1,5 @@
+# LarzOS AI router config. Managed by `larz-system` from your system.lz.
+gateway = "https://gateway.larzpay.com"
+
+[local]
+models = []

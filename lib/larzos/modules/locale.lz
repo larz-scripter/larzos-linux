@@ -1,0 +1,33 @@
+# locale + timezone module.
+
+let id = "locale"
+let title = "Locale & timezone"
+
+fn plan(spec, ctx) {
+  let actions = []
+
+  let want_tz = spec["timezone"]
+  let have_tz = capture("readlink -f /etc/localtime").strip()
+  if not have_tz.contains(want_tz) {
+    actions.push({
+      "desc": "set timezone -> " + want_tz,
+      "cmd": "timedatectl set-timezone " + want_tz,
+      "skip": false,
+    })
+  }
+
+  let want_loc = spec["locale"]
+  let have_loc = capture("locale | grep '^LANG='").strip()
+  if not have_loc.contains(want_loc) {
+    actions.push({
+      "desc": "generate + set locale -> " + want_loc,
+      "cmd": "sed -i 's/^# *" + want_loc + "/" + want_loc + "/' /etc/locale.gen && locale-gen && update-locale LANG=" + want_loc,
+      "skip": false,
+    })
+  }
+
+  if len(actions) == 0 {
+    return [{"desc": "timezone + locale already match", "cmd": "", "skip": true}]
+  }
+  return actions
+}

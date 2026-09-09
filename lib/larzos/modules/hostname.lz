@@ -1,0 +1,17 @@
+# hostname module - converge the system hostname onto spec.hostname.
+
+let id = "hostname"
+let title = "Hostname"
+
+fn plan(spec, ctx) {
+  let want = spec["hostname"]
+  let have = capture("hostname").strip()
+  if have == want {
+    return [{"desc": "hostname is already " + want, "cmd": "", "skip": true}]
+  }
+  return [{
+    "desc": "set hostname: " + have + " -> " + want,
+    "cmd": "hostnamectl set-hostname " + want,
+    "skip": false,
+  }]
+}

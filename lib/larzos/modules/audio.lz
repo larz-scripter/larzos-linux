@@ -1,0 +1,46 @@
+# audio module - write a PipeWire low-latency drop-in matching spec.audio.
+#
+# profile "pro"     -> small fixed quantum, RT priority, 48k
+# profile "desktop" -> PipeWire defaults (larger quantum, power-friendly)
+# profile "off"     -> remove the drop-in
+
+let id = "audio"
+let title = "Audio (PipeWire)"
+
+let DROPIN = "/etc/pipewire/pipewire.conf.d/99-larzos.conf"
+
+fn _dropin(a) {
+  let q = str(a["quantum"])
+  let r = str(a["rate"])
+  return "# Managed by larz-system (audio module). Do not edit.\n" +
+         "context.properties = {\n" +
+         "    default.clock.rate          = " + r + "\n" +
+         "    default.clock.quantum       = " + q + "\n" +
+         "    default.clock.min-quantum   = " + q + "\n" +
+         "    default.clock.max-quantum   = " + q + "\n" +
+         "}\n"
+}
+
+fn plan(spec, ctx) {
+  let a = spec["audio"]
+
+  if a["profile"] == "off" {
+    if file_exists(DROPIN) {
+      return [{"desc": "remove low-latency drop-in", "cmd": "rm -f " + DROPIN, "skip": false}]
+    }
+    return [{"desc": "audio profile off, nothing to do", "cmd": "", "skip": true}]
+  }
+
+  let want = a["profile"] == "pro" ? _dropin(a) :
+             "# Managed by larz-system (audio module).\n# profile=desktop: PipeWire defaults, no overrides.\n"
+  let have = file_exists(DROPIN) ? read_file(DROPIN) : ""
+  if have == want {
+    return [{"desc": "audio profile '" + a["profile"] + "' already applied", "cmd": "", "skip": true}]
+  }
+  return [{
+    "desc": "write " + DROPIN + " (profile " + a["profile"] + ", " + str(a["quantum"]) + "/" + str(a["rate"]) + ")",
+    "file": DROPIN,
+    "content": want,
+    "skip": false,
+  }]
+}

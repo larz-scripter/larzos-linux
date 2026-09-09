@@ -1,0 +1,6 @@
+dist/
+*.deb
+*.iso
+/tmp/
+lz_modules/
+*.log

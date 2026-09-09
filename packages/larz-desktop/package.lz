@@ -1,0 +1,23 @@
+# larz-desktop - the metapackage that turns a base Debian/Ubuntu install
+# into LarzOS. It pulls nothing but dependencies: install this on a stock
+# system and you have the LarzOS shell, low-latency audio and the AI
+# manager. `apt install larz-desktop` is the whole conversion.
+
+import "larzos/pkg" as pkg
+
+pkg.package({
+  "name":       "larz-desktop",
+  "version":    "0.1.0",
+  "summary":    "LarzOS desktop metapackage (Larz shell, low-latency audio, AI manager)",
+  "arch":       "all",
+  "section":    "metapackages",
+  "depends": [
+    "larzsh",
+    "larz-ai",
+    "larz-system",
+    "pipewire", "pipewire-jack", "wireplumber",
+    "rtkit",
+  ],
+  "build":   [],
+  "install": [],
+})

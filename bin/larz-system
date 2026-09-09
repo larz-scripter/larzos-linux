@@ -1,0 +1,130 @@
+#!/usr/bin/env larzscript
+# larz-system - evaluate a system.lz spec and converge the machine onto it.
+#
+#   larz-system plan  [system.lz]   show what would change, touch nothing
+#   larz-system apply [system.lz]   make the changes (needs root)
+#   larz-system show                print the last-applied spec
+#   larz-system modules             list the realization modules
+#   larz-system version
+#
+# Default spec: /etc/larzos/system.lz
+#
+# The spec file is ordinary Larzscript. It hands a machine description to
+# larzos.system(...); this tool reads that back as JSON and runs each
+# module's plan() to diff desired state against the live system.
+
+import "json" as json
+
+let VERSION = "0.1.0"
+let MODULES = ["hostname", "locale", "users", "packages", "services", "audio", "ai"]
+let DEFAULT_SPEC = "/etc/larzos/system.lz"
+let STATE = "/var/lib/larzos/spec.json"
+
+fn die(msg) { print("larz-system: " + msg); exit(1) }
+
+fn is_root() { return capture("id -u").strip() == "0" }
+
+fn eval_spec(path) {
+  if not file_exists(path) { die("spec file not found: " + path) }
+  let tmp = "/tmp/larzos-spec-" + str(int(clock() * 1000)) + ".json"
+  let lp = env("LARZSCRIPT_PATH", "")
+  let pfx = lp == "" ? "" : "LARZSCRIPT_PATH=" + lp + " "
+  let rc = run(pfx + "LARZOS_SPEC_OUT=" + tmp + " larzscript " + path)
+  if rc != 0 { die("spec file failed to evaluate: " + path) }
+  if not file_exists(tmp) { die("spec did not call larzos.system(...): " + path) }
+  let data = json.parse(read_file(tmp))
+  run("rm -f " + tmp)
+  return data
+}
+
+fn build_plan(spec) {
+  let groups = []
+  for name in MODULES {
+    let modpath = "larzos/modules/" + name
+    import modpath as m
+    groups.push({"title": m.title, "actions": m.plan(spec, {})})
+  }
+  return groups
+}
+
+fn print_plan(groups) {
+  let pending = 0
+  for g in groups {
+    print("")
+    print("== " + g["title"] + " ==")
+    for a in g["actions"] {
+      if a["skip"] {
+        print("  ok    " + a["desc"])
+      } else {
+        print("  apply " + a["desc"])
+        pending = pending + 1
+      }
+    }
+  }
+  print("")
+  print(str(pending) + " change(s) pending")
+  return pending
+}
+
+fn do_apply(groups) {
+  for g in groups {
+    for a in g["actions"] {
+      if a["skip"] { continue }
+      print("-> " + a["desc"])
+      if a.has("file") {
+        run("mkdir -p " + capture("dirname " + a["file"]).strip())
+        write_file(a["file"], a["content"])
+      } else if a["cmd"] != "" {
+        if run(a["cmd"]) != 0 { die("command failed: " + a["cmd"]) }
+      }
+    }
+  }
+}
+
+fn spec_path(rest) {
+  return len(rest) >= 1 ? rest[0] : DEFAULT_SPEC
+}
+
+# ---- dispatch ----
+if len(args) == 0 {
+  print("usage: larz-system plan|apply|show|modules|version [system.lz]")
+  exit(0)
+}
+let cmd = args[0]
+let rest = args[1:]
+
+if cmd == "version" {
+  print("larz-system " + VERSION)
+} else if cmd == "modules" {
+  for name in MODULES {
+    let modpath = "larzos/modules/" + name
+    import modpath as m
+    print("  " + m.id + "  -  " + m.title)
+  }
+} else if cmd == "show" {
+  if not file_exists(STATE) { die("no spec has been applied yet") }
+  print(json.pretty(json.parse(read_file(STATE))))
+} else if cmd == "plan" {
+  let spec = eval_spec(spec_path(rest))
+  print("larz-system: plan for " + spec["hostname"])
+  print_plan(build_plan(spec))
+} else if cmd == "apply" {
+  if not is_root() { die("apply needs root (try: sudo larz-system apply)") }
+  let path = spec_path(rest)
+  let spec = eval_spec(path)
+  let groups = build_plan(spec)
+  print("larz-system: applying spec for " + spec["hostname"])
+  let pending = print_plan(groups)
+  if pending == 0 {
+    print("nothing to do")
+  } else {
+    print("")
+    do_apply(groups)
+    run("mkdir -p " + capture("dirname " + STATE).strip())
+    write_file(STATE, json.stringify(spec))
+    print("")
+    print("done - " + str(pending) + " change(s) applied")
+  }
+} else {
+  die("unknown command: " + cmd)
+}

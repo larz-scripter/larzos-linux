@@ -1,0 +1,26 @@
+# services module - enable/disable systemd units to match spec.services.
+
+let id = "services"
+let title = "Services"
+
+fn _is_enabled(unit) {
+  return capture("systemctl is-enabled " + unit + " 2>/dev/null").strip() == "enabled"
+}
+
+fn plan(spec, ctx) {
+  let actions = []
+  for name in keys(spec["services"]) {
+    let want = spec["services"][name]     # "enabled" | "disabled"
+    let unit = name.contains(".") ? name : name + ".service"
+    let on = _is_enabled(unit)
+    if want == "enabled" and not on {
+      actions.push({"desc": "enable + start " + unit, "cmd": "systemctl enable --now " + unit, "skip": false})
+    } else if want == "disabled" and on {
+      actions.push({"desc": "disable + stop " + unit, "cmd": "systemctl disable --now " + unit, "skip": false})
+    }
+  }
+  if len(actions) == 0 {
+    return [{"desc": "all managed services in desired state", "cmd": "", "skip": true}]
+  }
+  return actions
+}

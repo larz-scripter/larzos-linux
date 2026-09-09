@@ -1,0 +1,68 @@
+#!/usr/bin/env larzscript
+# larz-pkg - build LarzOS packages from packages/<name>/package.lz
+#
+#   larz-pkg show  <dir>     print the resolved package definition
+#   larz-pkg deb   <dir>     build a .deb into ./dist/  (needs dpkg-deb)
+#   larz-pkg list           list packages/ in this checkout
+#
+# A package.lz is Larzscript that calls package({...}) (see lib/larzos/pkg.lz).
+
+import "json" as json
+import "larzos/pkg" as pkg
+
+fn die(m) { print("larz-pkg: " + m); exit(1) }
+
+fn resolve(dir) {
+  let f = dir + "/package.lz"
+  if not file_exists(f) { die("no package.lz in " + dir) }
+  let tmp = "/tmp/larzos-pkg-" + str(int(clock() * 1000)) + ".json"
+  let lp = env("LARZSCRIPT_PATH", "")
+  let pfx = lp == "" ? "" : "LARZSCRIPT_PATH=" + lp + " "
+  if run(pfx + "LARZOS_PKG_OUT=" + tmp + " larzscript " + f) != 0 { die("package.lz failed: " + f) }
+  let d = json.parse(read_file(tmp))
+  run("rm -f " + tmp)
+  return d
+}
+
+if len(args) == 0 { print("usage: larz-pkg show|deb|list <dir>"); exit(0) }
+let cmd = args[0]
+
+if cmd == "list" {
+  for name in sorted(listdir("packages")) { print("  " + name) }
+} else if cmd == "show" {
+  if len(args) < 2 { die("show needs a directory") }
+  let d = resolve(args[1])
+  print(json.pretty(d))
+  print("")
+  print("--- DEBIAN/control ---")
+  print(pkg.control(d))
+} else if cmd == "deb" {
+  if len(args) < 2 { die("deb needs a directory") }
+  let src = args[1]
+  let d = resolve(src)
+  let stage = "/tmp/larzos-build-" + d["name"]
+  run("rm -rf " + stage)
+  run("mkdir -p " + stage + "/DEBIAN")
+  write_file(stage + "/DEBIAN/control", pkg.control(d))
+
+  for line in d["build"] {
+    print("build: " + line)
+    if run("cd " + src + " && " + line) != 0 { die("build step failed: " + line) }
+  }
+  for line in d["install"] {
+    print("install: " + line)
+    if run("cd " + src + " && DESTDIR=" + stage + " sh -c '" + line + "'") != 0 { die("install step failed: " + line) }
+  }
+
+  # Normalize perms - build hosts with a tight umask leave 0700 dirs, which
+  # dpkg-deb rejects.
+  run("find " + stage + " -type d -exec chmod 0755 {} +")
+
+  run("mkdir -p dist")
+  let out = "dist/" + d["name"] + "_" + d["version"] + "_" + d["arch"] + ".deb"
+  if run("dpkg-deb --build --root-owner-group " + stage + " " + out) != 0 { die("dpkg-deb failed") }
+  print("")
+  print("built " + out)
+} else {
+  die("unknown command: " + cmd)
+}
