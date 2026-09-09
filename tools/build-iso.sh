@@ -35,6 +35,11 @@ chroot "$ROOT" /bin/sh -eux <<'CHROOT'
 export DEBIAN_FRONTEND=noninteractive
 apt-get update
 apt-get install -y --no-install-recommends linux-image-generic casper
+
+# casper's live overlay needs these in the initramfs or it drops to a
+# busybox shell ("cow format specified as 'overlay' and no support found").
+sed -i 's/^MODULES=.*/MODULES=most/' /etc/initramfs-tools/initramfs.conf
+printf '\noverlay\nsquashfs\nisofs\nloop\nsr_mod\ncdrom\nvfat\n' >> /etc/initramfs-tools/modules
 # live autologin as the larz user, into larzsh
 printf 'export USERNAME="larz"\nexport HOST="larzos"\nexport BUILD_SYSTEM="LarzOS"\nexport FLAVOUR="LarzOS"\n' > /etc/casper.conf
 mkdir -p /etc/systemd/system/getty@tty1.service.d
@@ -48,7 +53,7 @@ cat > /etc/systemd/system/serial-getty@ttyS0.service.d/autologin.conf <<E 2>/dev
 ExecStart=
 ExecStart=-/sbin/agetty --autologin larz --keep-baud 115200,38400,9600 %I \$TERM
 E
-update-initramfs -u
+update-initramfs -c -k all
 apt-get clean
 rm -rf /var/lib/apt/lists/* /var/cache/apt/archives/*.deb
 CHROOT
