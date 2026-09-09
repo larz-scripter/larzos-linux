@@ -2,6 +2,25 @@
 
 Newest first. Mirrored to <https://larzos.com/larzos-linux/>.
 
+## 2026-09-09 - lean ISO boots; Termux edition
+
+- **Lean live ISO (128 MB) boots end to end on real VirtualBox 7.2** (PC2):
+  GRUB -> kernel 6.8 -> casper overlay root -> autologin to `larzsh`. The prior
+  `(initramfs)` drop was `tools/build-iso.sh` writing `BUILD_SYSTEM="LarzOS"`
+  into `casper.conf`; casper only sets `MP_QUIET` for `Debian`/`Ubuntu`, so it
+  ran `modprobe "" -b overlay` (empty arg -> rc 1 -> panic). Fixed:
+  `BUILD_SYSTEM="Ubuntu"` (FLAVOUR stays `LarzOS`).
+- Verified in the booted image: `sudo larz-system plan` (8 modules, clean),
+  `larz-aid route --task coding` -> gateway, `larz-install` present. Only
+  failed unit is `casper-md5check` (stale checksum on a stripped ISO -
+  cosmetic).
+- Published ISO `sha256 55a2ae70...`; `larzos.com/larzos-linux/larzos-live-amd64.iso`.
+- `tools/termux-install.sh` - `larz-system` / `larz-pkg` / `larz-aid` on an
+  unrooted Android phone via Termux, native: larzscript ships as a static
+  `aarch64` ELF, so no proot / chroot. `plan`, `show`, `modules` and the AI
+  router work; `apply` stays disabled (root + apt + systemd).
+  One-liner: `curl -fsSL https://larzos.com/larzos-linux/termux.sh | sh`.
+
 ## 2026-09-09 — Phase 0 scaffold
 
 - New repo. The LarzOS effort pivots from the bare-metal kernel to a Linux
