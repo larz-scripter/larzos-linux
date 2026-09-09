@@ -36,7 +36,9 @@ KERNEL_PKG="${KERNEL_PKG:-linux-image-virtual}"
 chroot "$ROOT" /bin/sh -eux <<CHROOT
 export DEBIAN_FRONTEND=noninteractive
 apt-get update
-apt-get install -y --no-install-recommends $KERNEL_PKG casper
+apt-get install -y --no-install-recommends $KERNEL_PKG casper \
+  gdisk parted dosfstools rsync e2fsprogs \
+  grub-pc-bin grub-efi-amd64-bin grub2-common
 CHROOT
 
 chroot "$ROOT" /bin/sh -eux <<'CHROOT'

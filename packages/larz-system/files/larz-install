@@ -19,6 +19,17 @@ let assume_yes = args.contains("--yes")
 if capture("id -u").strip() != "0" { die("must run as root") }
 if not file_exists(disk) { die("no such device: " + disk) }
 
+# tools we shell out to - the live ISO bundles these; a running system may not
+let need = ["sgdisk", "partprobe", "mkfs.ext4", "mkfs.fat", "rsync", "blkid"]
+let missing = []
+for t in need {
+  if capture("command -v " + t + " 2>/dev/null").strip() == "" { missing.push(t) }
+}
+if len(missing) > 0 {
+  die("missing tools: " + join(missing, " ") +
+      "\n  install them first:  apt-get install -y gdisk parted dosfstools rsync e2fsprogs")
+}
+
 let uefi = file_exists("/sys/firmware/efi")
 print("larz-install")
 print("  target:  " + disk + "   (" + capture("lsblk -dno SIZE " + disk).strip() + ")")
@@ -69,14 +80,12 @@ sh("rm -f /mnt/larzos/etc/systemd/system/serial-getty@ttyS0.service.d/autologin.
 
 print("installing the bootloader ...")
 for d in ["dev", "dev/pts", "proc", "sys", "run"] { sh("mount --bind /" + d + " /mnt/larzos/" + d) }
-let grub_pkgs = uefi ? "grub-efi-amd64 grub-efi-amd64-signed shim-signed" : "grub-pc"
+# grub packages come over in the rsync (the live ISO bundles both targets);
+# if a network is up we also refresh them, but it is not required.
 let grub_cmd = uefi
-  ? "grub-install --target=x86_64-efi --efi-directory=/boot/efi --bootloader-id=LarzOS --recheck"
+  ? "grub-install --target=x86_64-efi --efi-directory=/boot/efi --bootloader-id=LarzOS --recheck --no-nvram"
   : "grub-install --target=i386-pc --recheck " + disk
-sh("chroot /mnt/larzos /bin/sh -euxc '" +
-   "export DEBIAN_FRONTEND=noninteractive; " +
-   "apt-get update && apt-get install -y --no-install-recommends " + grub_pkgs + "; " +
-   grub_cmd + "; update-grub'")
+sh("chroot /mnt/larzos /bin/sh -euxc '" + grub_cmd + " && update-grub'")
 for d in ["run", "sys", "proc", "dev/pts", "dev"] { sh("umount -l /mnt/larzos/" + d) }
 
 print("done. unmounting ...")
