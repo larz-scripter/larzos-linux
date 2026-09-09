@@ -27,6 +27,13 @@ fi
 
 [ -x "$R/etc/update-motd.d/00-larzos" ] && ok "motd hook present" || bad "missing /etc/update-motd.d/00-larzos"
 
+h=$(cat "$R/etc/hostname" 2>/dev/null || echo "")
+case "$h" in
+  larzos|larzbox|larz*) ok "hostname -> $h" ;;
+  "") echo "  note  /etc/hostname unset (live-config will name it)" ;;
+  *) bad "/etc/hostname is '$h' - a leaked build-host name" ;;
+esac
+
 for leak in 10-help-text 50-motd-news 80-esm 90-updates-available 91-release-upgrade 95-hwe-eol 10-uname; do
   [ -e "$R/etc/update-motd.d/$leak" ] && bad "base motd script left behind: $leak"
 done

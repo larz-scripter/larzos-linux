@@ -77,7 +77,8 @@ fn doctor() {
   row(branded ? "ok" : "fail", "identity ", branded ? "presents as LarzOS" : "NOT branded - run: sudo larz rebrand apply")
 
   let eng = sh("command -v larz-system >/dev/null 2>&1") == 0
-  row(eng ? "ok" : "fail", "engine   ", eng ? out("larz-system version") : "larz-system missing")
+  let ev = out("dpkg-query -W -f='${Version}' larz-system 2>/dev/null")
+  row(eng ? "ok" : "fail", "engine   ", eng ? ("larz-system " + (ev == "" ? out("larz-system version") : ev)) : "larz-system missing")
 
   let h = out("curl -s --max-time 2 http://127.0.0.1:8199/health")
   row(h.contains("\"ok\"") ? "ok" : "info", "ai router", h == "" ? "not running (larz ai serve &)" : h)

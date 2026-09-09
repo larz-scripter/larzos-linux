@@ -44,6 +44,10 @@ deb $MIRROR $SUITE-updates main contrib non-free-firmware
 deb $SECMIRROR $SUITE-security main contrib non-free-firmware
 EOF
 
+# name the machine LarzOS (debootstrap leaves whatever the host had)
+echo larzos > "$ROOT/etc/hostname"
+printf '127.0.0.1\tlocalhost\n127.0.1.1\tlarzos\n' > "$ROOT/etc/hosts"
+
 curl -fsSL "$APT_BASE/KEY.asc" | gpg --dearmor > "$ROOT/usr/share/keyrings/larzos-archive-keyring.gpg"
 echo "deb [signed-by=/usr/share/keyrings/larzos-archive-keyring.gpg] $APT_BASE stable main" \
   > "$ROOT/etc/apt/sources.list.d/larzos.list"
