@@ -63,6 +63,7 @@ write config).
 | `locale` | timezone (`timedatectl`) + `LANG` (`locale-gen`) |
 | `users` | account existence, login shell, group membership (never deletes) |
 | `packages` | installs missing packages via `apt-get` (no removal yet) |
+| `systemd` | renders `spec.units` to `/etc/systemd/system/*` + `daemon-reload` |
 | `services` | `systemctl enable --now` / `disable --now` to match `services.*` |
 | `audio` | `/etc/pipewire/pipewire.conf.d/99-larzos.conf` from `audio.profile` |
 | `ai` | `/etc/larzos/ai.toml` from `ai.*`, consumed by `larz-aid` |
@@ -96,7 +97,10 @@ users      list of {
              sudo    bool  (auto-true if "sudo" in groups)
            }
 packages   list of string
-services   map of name -> "enabled" | "disabled"
+services   map of name -> "enabled" | "disabled"   (name may be foo or foo.timer)
+units      map of unit-filename -> { Section -> { key -> value } }
+             value: string | number | bool (-> yes/no) | list (-> repeated key= lines)
+             written to /etc/systemd/system; a change runs daemon-reload
 audio      { profile "pro"|"desktop"|"off", rate int, quantum int }
 ai         { local_models list of string, gateway string }
 ```

@@ -28,9 +28,24 @@ larzos.system({
   ],
 
   "services": {
-    "ssh":      "enabled",
-    "pipewire": "enabled",
-    "larz-ai":  "enabled",
+    "ssh":            "enabled",
+    "pipewire":       "enabled",
+    "larz-ai":        "enabled",
+    "larz-reconcile.timer": "enabled",
+  },
+
+  # Units generated straight from this file - no hand-written .service.
+  # Here: re-apply this spec nightly so the machine self-heals toward it.
+  "units": {
+    "larz-reconcile.service": {
+      "Unit":    { "Description": "Re-converge the machine onto /etc/larzos/system.lz" },
+      "Service": { "Type": "oneshot", "ExecStart": "/usr/bin/larz-system apply" },
+    },
+    "larz-reconcile.timer": {
+      "Unit":    { "Description": "Nightly larz-system reconcile" },
+      "Timer":   { "OnCalendar": "daily", "Persistent": true },
+      "Install": { "WantedBy": "timers.target" },
+    },
   },
 
   "audio": {

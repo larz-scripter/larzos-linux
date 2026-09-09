@@ -37,3 +37,15 @@ Newest first. Mirrored to <https://larzos.com/larzos-linux/>.
   `dists/stable`, `pool/main`, `KEY.asc`.
 - `tools/install.sh` — `curl -fsSL https://larzos.com/larzos-linux/install.sh | sudo sh`
   adds the repo + key and installs a component.
+
+## 2026-09-09 — Phase 1 cont.: unit generation + arm64
+
+- New `systemd` module: `spec.units` renders straight to
+  `/etc/systemd/system/*` (sections → `key=value`, lists → repeated lines,
+  bools → yes/no) + `daemon-reload` on change. `examples/system.lz` now
+  declares a `larz-reconcile.timer` that re-applies the spec nightly — the
+  machine self-heals toward its declaration, no hand-written `.service`.
+- `services` module already handles `foo.timer` names.
+- `repo-publish.sh`: pool is cumulative — arm64 debs built on another host
+  sit alongside amd64 without being clobbered by an amd64-only rebuild.
+- arm64 `larzscript` package published; repo now serves `all amd64 arm64`.

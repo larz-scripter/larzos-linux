@@ -57,6 +57,7 @@ fn system(spec) {
   _default(spec, "users", [])
   _default(spec, "packages", [])
   _default(spec, "services", {})
+  _default(spec, "units", {})
   _default(spec, "audio", {})
   _default(spec, "ai", {})
 
@@ -80,6 +81,7 @@ fn system(spec) {
     "users": spec["users"],
     "packages": spec["packages"],
     "services": spec["services"],
+    "units": spec["units"],
     "audio": spec["audio"],
     "ai": spec["ai"],
   }

@@ -48,15 +48,21 @@ EOF
   rm -f "$GNUPGHOME/keygen"
 fi
 
-# --- pool ----------------------------------------------------------------
+# --- pool --------------------------------------------------------------
+# New builds land in $DEB_DIR; the pool is cumulative (arch-specific debs
+# from other build hosts, e.g. arm64, stay put). Newer versions of the same
+# file overwrite by name.
 mkdir -p "$REPO_ROOT/pool/$COMPONENT"
-cp -f "$DEB_DIR"/*.deb "$REPO_ROOT/pool/$COMPONENT/"
+if ls "$DEB_DIR"/*.deb >/dev/null 2>&1; then
+  cp -f "$DEB_DIR"/*.deb "$REPO_ROOT/pool/$COMPONENT/"
+fi
 
 # --- Packages indexes, per architecture --------------------------------
+ls "$REPO_ROOT/pool/$COMPONENT"/*.deb >/dev/null 2>&1 || {
+  echo "no .deb files in $DEB_DIR or the pool" >&2; exit 1; }
 ARCHES=$(for f in "$REPO_ROOT/pool/$COMPONENT"/*.deb; do
            dpkg-deb -f "$f" Architecture
          done | sort -u)
-[ -n "$ARCHES" ] || { echo "no .deb files found in $DEB_DIR" >&2; exit 1; }
 # apt needs binary-all to exist even when packages are arch-specific
 echo "$ARCHES" | grep -qx all || ARCHES="$ARCHES
 all"
