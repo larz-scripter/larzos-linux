@@ -38,23 +38,32 @@ pure Larzscript; the thing that runs at boot is still battle-tested C.
 
 ---
 
-## Quickstart (any Debian/Ubuntu box)
+## Install (Ubuntu 24.04, amd64)
+
+A signed apt repo is live. One command adds it and installs the desktop
+metapackage (Larz shell + low-latency audio + AI manager):
+
+```sh
+curl -fsSL https://larzos.com/larzos-linux/install.sh | sudo sh
+# or just the engine:  ... | sudo sh -s -- larz-system
+```
+
+Repo line: `deb [signed-by=/usr/share/keyrings/larzos-archive-keyring.gpg] https://larzos.com/apt stable main`
+· key: <https://larzos.com/apt/KEY.asc>
+
+Then edit `/etc/larzos/system.lz`, run `larz-system plan`, then
+`sudo larz-system apply`.
+
+## Run from source (any Debian/Ubuntu box)
 
 ```sh
 git clone https://github.com/larz-scripter/larzos-linux
 cd larzos-linux
 export LARZSCRIPT_PATH=lib          # dev only; installed system uses stdlib
 
-# See what applying the reference machine spec would change — touches nothing:
-larzscript bin/larz-system plan examples/system.lz
-
-# Converge the machine onto the spec:
+larzscript bin/larz-system plan examples/system.lz     # preview, touches nothing
 sudo -E larzscript bin/larz-system apply examples/system.lz
 ```
-
-`apt install larz-desktop` (once the repo is published) turns a stock
-system into LarzOS: the Larz shell, low-latency audio, the AI manager.
-Test the whole stack before there is ever an ISO.
 
 ---
 

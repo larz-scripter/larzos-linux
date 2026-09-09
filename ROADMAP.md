@@ -12,24 +12,27 @@ base that boots on today's hardware.
 
 ---
 
-## Phase 0 — the language surface  ·  *in progress*
+## Phase 0 — the language surface  ·  *done*
 
 - [x] `system.lz` schema + `larzos.system(...)` normalizer
 - [x] `larz-system plan` / `apply` / `show` / `modules`
 - [x] realization modules: hostname, locale, users, packages, services, audio, ai
 - [x] `.lz` package definition format + `larz-pkg` → real `.deb`
 - [x] distro packages: `larz-desktop`, `larz-ai`, `larzsh`
-- [ ] `larz-system` `--check` in CI on every push
+- [x] `larz-system` `--check` in CI on every push
+
+## Phase 1 — the overlay repo  ·  *in progress*
+
+- [x] signed apt repo (`apt-ftparchive` + gpg, ed25519 key) at `larzos.com/apt`
+- [x] `apt install larz-desktop` resolves on a stock Ubuntu box (`apt-get update` verifies clean)
+- [x] `larzscript` + `larz-system` packaged; `tools/refresh.sh` republishes
+- [x] `system.lz` rollback + `status` + `history` (snapshots in `/var/lib/larzos/history/`)
+- [x] bootstrap script: `curl … | sudo sh` → repo key + `apt install`
+- [ ] arm64 packages (`larzscript` is arch-specific)
+- [ ] `larz-system` generates real systemd drop-ins, not just enables units
+- [ ] automated repo refresh on tagged release (GitHub Actions → server)
 - [ ] `larzsh` fleshed out (pipes, redirection, job control)
 - [ ] `larz-aid` local socket daemon (currently a routing skeleton)
-
-## Phase 1 — the overlay repo
-
-- [ ] signed apt repo (`reprepro`/`aptly`) hosting the distro packages
-- [ ] `apt install larz-desktop` converts a stock Ubuntu LTS box
-- [ ] `larz-system` generates real systemd drop-ins, not just plans
-- [ ] `system.lz` rollback (keep the last N applied specs, `larz-system rollback`)
-- [ ] bootstrap script: `curl … | sh` → installs larzscript + larz-system + repo key
 
 ## Phase 2 — installable images
 
