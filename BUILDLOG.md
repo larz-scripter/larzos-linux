@@ -2,6 +2,27 @@
 
 Newest first. Mirrored to <https://larzos.com/larzos-linux/>.
 
+## 2026-09-09 - the larz command grows up (v0.1.6)
+
+- **Money is in the OS.** `lib/larzos/wallet.lz` - the machine has a wallet;
+  AI usage, metered packages and API calls go into a receipted, append-only
+  ledger, capped by `larz budget` or a `budget` block in system.lz. Verbs:
+  `larz wallet | pay | topup | budget | spend`. Providers: local now,
+  cryptolarz/larzpay stubbed. New `budget` module.
+- **An OS you talk to.** `larz-aid` rewritten to speak OpenAI to
+  gateway.larzos.com, route by task, check the `ai` budget before a call and
+  meter the cost after. `larz do "<goal>"` proposes commands and (after a
+  snapshot) runs them; `larz explain`, `larz why <topic>`, `larz ask`.
+- **Configuration generations.** `larz snapshot` / `larz switch <n>` /
+  `larz generations` / `larz diff` - `lib/larzos/genlib.lz`.
+- **Fleet + sharing.** `larz fleet add|apply|run`; `larz share` /
+  `larz adopt <id>` against a new machine hub (`tools/machined.lz`, deployed
+  at larzos.com/larzos-linux/m/).
+- Docs: larzos.com/larzos-linux/larz/ (full reference) and /different/
+  (what makes LarzOS different). man page + bash completion rewritten.
+- Note: Larzscript reserves `wallet`/`price`/`to`/`pay`/`require`; aliased the
+  wallet import `as wal`.
+
 ## 2026-09-09 - it presents as LarzOS; base is Debian
 
 - **Standardized on Debian stable** as the base (was: Ubuntu/casper ISO +
