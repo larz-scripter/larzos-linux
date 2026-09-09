@@ -118,3 +118,11 @@ Newest first. Mirrored to <https://larzos.com/larzos-linux/>.
   the initramfs and MODULES=most; still fails under TCG. Needs a real
   VirtualBox / bare-metal boot (PC2/VBox was offline this session).
 - `larz-install` is done regardless - it runs from any live environment.
+
+## 2026-09-09 (later) — ISO slimmed + real VM test underway
+
+- `build-iso.sh`: `linux-image-virtual` + `mksquashfs -comp xz` + strip
+  doc/man/locale → **116 MB** ISO (was 928 MB).
+- Testing on real VirtualBox 7.2 (PC2, reached via the NetBridge SOCKS
+  path) — QEMU's software emulation couldn't get casper past the overlay
+  probe; a real hypervisor is the right test surface.
