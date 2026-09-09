@@ -4,7 +4,9 @@ _larz() {
     COMPREPLY=()
     cur="${COMP_WORDS[COMP_CWORD]}"
     prev="${COMP_WORDS[COMP_CWORD-1]}"
-    verbs="install remove search update upgrade list plan apply rollback status ai doctor rebrand version apt help"
+    verbs="install remove search update upgrade list plan apply rollback status \
+           snapshot generations switch diff wallet pay topup budget spend \
+           ai do explain why ask fleet share adopt doctor rebrand version apt help"
     if [ "$COMP_CWORD" -eq 1 ]; then
         COMPREPLY=( $(compgen -W "$verbs" -- "$cur") )
         return
@@ -12,10 +14,16 @@ _larz() {
     case "${COMP_WORDS[1]}" in
         install|remove|search)
             COMPREPLY=( $(compgen -W "$(apt-cache --no-generate pkgnames "$cur" 2>/dev/null)" -- "$cur") ) ;;
-        plan|apply)
+        plan|apply|adopt|explain)
             COMPREPLY=( $(compgen -f -- "$cur") ) ;;
         ai)
-            [ "$COMP_CWORD" -eq 2 ] && COMPREPLY=( $(compgen -W "route models serve health chat" -- "$cur") ) ;;
+            [ "$COMP_CWORD" -eq 2 ] && COMPREPLY=( $(compgen -W "route models serve pull health" -- "$cur") ) ;;
+        budget)
+            [ "$COMP_CWORD" -eq 2 ] && COMPREPLY=( $(compgen -W "ai api pkg cloud transfer" -- "$cur") ) ;;
+        spend)
+            [ "$COMP_CWORD" -eq 2 ] && COMPREPLY=( $(compgen -W "ai api pkg cloud transfer" -- "$cur") ) ;;
+        fleet)
+            [ "$COMP_CWORD" -eq 2 ] && COMPREPLY=( $(compgen -W "add rm apply run" -- "$cur") ) ;;
         rebrand)
             [ "$COMP_CWORD" -eq 2 ] && COMPREPLY=( $(compgen -W "apply restore status" -- "$cur") ) ;;
     esac

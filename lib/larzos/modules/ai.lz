@@ -1,8 +1,8 @@
 # ai module - configure larz-ai, the OS-level model manager + router.
 #
-# Writes /etc/larzos/ai.toml, which larz-aid reads to know which models to
-# keep available locally and which Gateway to fall back to when a request
-# needs a model that isn't local (or the box has no GPU).
+# Manages the `gateway` and `[local] models` keys of /etc/larzos/ai.toml from
+# system.lz. Any other keys (default_model, [pricing], ollama ...) that the
+# package ships or you edit by hand are left alone.
 
 import "toml" as toml
 
@@ -11,19 +11,25 @@ let title = "AI (larz-ai)"
 
 let CONF = "/etc/larzos/ai.toml"
 
-fn plan(spec, ctx) {
+fn _merged(spec) {
   let ai = spec["ai"]
-  let want = toml.stringify({
-    "gateway": ai["gateway"],
-    "local": {"models": ai["local_models"]},
-  })
+  let c = file_exists(CONF) ? toml.parse(read_file(CONF)) : {}
+  c["gateway"] = ai["gateway"]
+  if not c.has("local") { c["local"] = {} }
+  c["local"]["models"] = ai["local_models"]
+  return c
+}
+
+fn plan(spec, ctx) {
+  let want = toml.stringify(_merged(spec))
   let have = file_exists(CONF) ? read_file(CONF) : ""
   if have == want {
     return [{"desc": "larz-ai config already current", "cmd": "", "skip": true}]
   }
-  let n = str(len(ai["local_models"]))
+  let ai = spec["ai"]
   return [{
-    "desc": "write " + CONF + " (" + n + " local model(s), gateway " + (ai["gateway"] == "" ? "none" : ai["gateway"]) + ")",
+    "desc": "update " + CONF + " (" + str(len(ai["local_models"])) + " local model(s), gateway " +
+            (ai["gateway"] == "" ? "none" : ai["gateway"]) + ")",
     "file": CONF,
     "content": want,
     "skip": false,

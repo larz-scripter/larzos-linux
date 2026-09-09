@@ -1,0 +1,15 @@
+# LarzOS wallet. Managed with `larz wallet`, `larz pay`, `larz budget`.
+#
+# provider = "local"     ledger only - metering and budgets work offline
+#          = "cryptolarz" back the wallet with a CryptoLarz USD balance
+#          = "larzpay"    back the wallet with a LarzPay account
+provider = "local"
+account  = ""
+currency = "USD"
+
+# Monthly spend caps. A `budget` block in system.lz overrides this via
+# /etc/larzos/budget.toml. Uncapped when unset.
+[budget]
+# ai   = 5.00
+# api  = 10.00
+# pkg  = 0.00

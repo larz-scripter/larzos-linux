@@ -1,0 +1,39 @@
+# budget module - write the monthly spend caps from spec.budget to
+# /etc/larzos/budget.toml, where larzos/wallet (and so `larz-aid` and every
+# `larz` money verb) reads them. spec.budget is a map of category -> dollars:
+#
+#   "budget": { "ai": 5, "api": 10, "cloud": 0 }
+
+import "toml" as toml
+
+let id = "budget"
+let title = "Spend budget"
+
+let CONF = "/etc/larzos/budget.toml"
+
+fn _want(spec) {
+  let b = spec.has("budget") ? spec["budget"] : {}
+  let m = {}
+  for k in keys(b) { m[k] = float(b[k]) }
+  return toml.stringify({"budget": m})
+}
+
+fn plan(spec, ctx) {
+  let want = _want(spec)
+  let have = file_exists(CONF) ? read_file(CONF) : ""
+  if have == want {
+    return [{"desc": "spend caps already current", "cmd": "", "skip": true}]
+  }
+  let b = spec.has("budget") ? spec["budget"] : {}
+  if len(keys(b)) == 0 and not file_exists(CONF) {
+    return [{"desc": "no budget set (spending is uncapped)", "cmd": "", "skip": true}]
+  }
+  let parts = []
+  for k in keys(b) { parts.push(k + " $" + str(b[k])) }
+  return [{
+    "desc": "write " + CONF + (len(parts) > 0 ? " (" + join(parts, ", ") + "/mo)" : " (cleared)"),
+    "file": CONF,
+    "content": want,
+    "skip": false,
+  }]
+}

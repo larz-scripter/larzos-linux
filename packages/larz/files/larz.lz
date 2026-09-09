@@ -1,67 +1,66 @@
 #!/usr/bin/env larzscript
-# larz - the LarzOS command. One verb for the whole machine: packages, the
-# system spec, the AI router, health. Everything underneath (apt, systemd,
-# larz-system, larz-aid) stays available but you rarely need to name it.
+# larz - the LarzOS command. One verb for the whole machine: software, the
+# system spec, money, the AI, generations, your fleet. The tools underneath
+# (apt, systemd, larz-system, larz-aid) stay usable directly; you rarely
+# need them.
 
-import "json" as json
-
-fn sh(cmd) { return run(cmd) }
-fn out(cmd) { return capture(cmd).strip() }
-fn is_root() { return out("id -u") == "0" }
-fn sudo() { return is_root() ? "" : "sudo " }
-
-fn q(s) { return "'" + s.replace("'", "'\\''") + "'" }
-fn qjoin(xs) {
-  let r = ""
-  for i in range(len(xs)) { r = r + (i > 0 ? " " : "") + q(xs[i]) }
-  return r
-}
+import "json"           as json
+import "larzos/wallet"  as wal
+import "larzos/aihelp"  as ai
+import "larzos/genlib"  as gen
+import "larzos/fleet"   as fleet
 
 let C = "\033[1;36m"
 let D = "\033[0;90m"
 let R = "\033[0m"
-fn head(s) { print(C + "==>" + R + " " + s) }
 
-fn osfield(k) {
-  let line = out("sh -c '. /etc/os-release 2>/dev/null; printf %s \"$" + k + "\"'")
-  return line
-}
+fn sh(cmd)  { return run(cmd) }
+fn out(cmd) { return capture(cmd).strip() }
+fn is_root(){ return out("id -u") == "0" }
+fn sudo()   { return is_root() ? "" : "sudo " }
+fn q(s)     { return "'" + s.replace("'", "'\\''") + "'" }
+fn qjoin(xs){ let r = ""; for i in range(len(xs)) { r = r + (i > 0 ? " " : "") + q(xs[i]) } return r }
+fn head(s)  { print(C + "==>" + R + " " + s) }
+fn need(c)  { if sh("command -v " + c + " >/dev/null 2>&1") != 0 { print("larz: '" + c + "' is not installed"); exit(1) } }
+fn osf(k)   { return out("sh -c '. /etc/os-release 2>/dev/null; printf %s \"$" + k + "\"'") }
 
 fn banner() {
-  let name = osfield("PRETTY_NAME")
-  if name == "" { name = "LarzOS" }
-  print(C + name + R)
+  let n = osf("PRETTY_NAME"); if n == "" { n = "LarzOS" }
+  print(C + n + R)
   print(D + out("uname -sr") + "  -  " + out("uname -m") + R)
 }
 
-fn need(cmd) {
-  if sh("command -v " + cmd + " >/dev/null 2>&1") != 0 {
-    print("larz: '" + cmd + "' is not installed"); exit(1)
-  }
+fn confirm(msg) {
+  print(msg + " " + D + "[y/N]" + R)
+  let a = input()
+  return a != nil and (a.strip() == "y" or a.strip() == "Y" or a.strip() == "yes")
 }
 
 fn usage() {
   banner()
   print("")
-  print("  larz " + C + "install" + R + " <pkg>...     add software")
-  print("  larz " + C + "remove" + R + "  <pkg>...     remove software")
-  print("  larz " + C + "search" + R + "  <text>       find software")
-  print("  larz " + C + "update" + R + "               refresh the package lists")
-  print("  larz " + C + "upgrade" + R + "              update everything installed")
-  print("  larz " + C + "list" + R + "                 list installed packages")
-  print("")
-  print("  larz " + C + "plan" + R + "   [system.lz]   preview changes to this machine")
-  print("  larz " + C + "apply" + R + "  [system.lz]   converge onto the spec")
-  print("  larz " + C + "rollback" + R + "             undo the last apply")
-  print("  larz " + C + "status" + R + "               drift + summary")
-  print("")
-  print("  larz " + C + "ai" + R + " <text>            ask the model router (larz-aid)")
-  print("  larz " + C + "ai route <task>" + R + "      which backend serves <task>")
-  print("  larz " + C + "doctor" + R + "               check the system over")
-  print("  larz " + C + "rebrand" + R + " [status]     re-assert LarzOS identity")
-  print("  larz " + C + "version" + R + "              versions")
-  print("")
-  print(D + "  escape hatch:  larz apt <args>   ->   apt-get <args>" + R)
+  print("  " + C + "software" + R)
+  print("    larz install|remove|search <pkg>     larz update      larz upgrade      larz list")
+  print("  " + C + "this machine" + R)
+  print("    larz plan [system.lz]                larz apply       larz rollback     larz status")
+  print("    larz snapshot [name]                 larz generations larz switch <n>   larz diff [<n>]")
+  print("  " + C + "money" + R)
+  print("    larz wallet                          larz pay <who> <amount>            larz topup <amount>")
+  print("    larz budget [<category> <amount>]    larz spend [category]")
+  print("  " + C + "ai" + R)
+  print("    larz ai <text>                       larz do \"<goal>\"   larz explain [file]")
+  print("    larz why <topic>                     larz ask <question>")
+  print("  " + C + "fleet" + R)
+  print("    larz fleet [add|rm <name> <target>]  larz fleet apply|run <...>")
+  print("    larz share                           larz adopt <id|url>")
+  print("  " + C + "other" + R)
+  print("    larz doctor    larz rebrand [status]    larz version    larz apt <args>")
+}
+
+fn count_updates() {
+  let n = out("sh -c 'apt-get -s upgrade 2>/dev/null | grep -c ^Inst'")
+  sh(sudo() + "sh -c 'mkdir -p /var/lib/larzos; echo " + q(n) + " > /var/lib/larzos/updates' 2>/dev/null")
+  return n
 }
 
 fn row(state, label, detail) {
@@ -73,32 +72,25 @@ fn row(state, label, detail) {
 
 fn doctor() {
   banner(); print("")
-  let branded = osfield("ID") == "larzos"
-  row(branded ? "ok" : "fail", "identity ", branded ? "presents as LarzOS" : "NOT branded - run: sudo larz rebrand apply")
-
+  let branded = osf("ID") == "larzos"
+  row(branded ? "ok" : "fail", "identity ", branded ? "presents as LarzOS" : "NOT branded - sudo larz rebrand apply")
   let eng = sh("command -v larz-system >/dev/null 2>&1") == 0
   let ev = out("dpkg-query -W -f='${Version}' larz-system 2>/dev/null")
-  row(eng ? "ok" : "fail", "engine   ", eng ? ("larz-system " + (ev == "" ? out("larz-system version") : ev)) : "larz-system missing")
-
+  row(eng ? "ok" : "fail", "engine   ", eng ? ("larz-system " + (ev == "" ? out("larz-system version") : ev)) : "missing")
   let h = out("curl -s --max-time 2 http://127.0.0.1:8199/health")
-  row(h.contains("\"ok\"") ? "ok" : "info", "ai router", h == "" ? "not running (larz ai serve &)" : h)
-
+  row(h.contains("\"ok\"") ? "ok" : "info", "ai router", h == "" ? "not running (larz ai serve &)" : "up")
   let srcs = out("sh -c 'cat /etc/apt/sources.list /etc/apt/sources.list.d/*.list /etc/apt/sources.list.d/*.sources 2>/dev/null | grep -cE \"^(deb|Types:)\"'")
-  row(srcs == "0" ? "warn" : "ok", "packages ", srcs + " apt source(s) configured")
-
+  row(srcs == "0" ? "warn" : "ok", "packages ", srcs + " apt source(s)")
+  let bal = wal.fmt(wal.balance())
+  let aisp = wal.fmt6(wal.spent("ai", ""))
+  row("info", "wallet   ", bal + "  (ai this month: " + aisp + ")")
+  row("info", "gens     ", str(gen.current()) + " generation(s), current #" + str(gen.current()))
   row("info", "disk     ", out("df -h / | awk 'NR==2{print $4\" free of \"$2}'"))
-
   let f = out("sh -c 'systemctl --failed --no-legend --plain 2>/dev/null | wc -l'")
   row(f == "0" ? "ok" : "warn", "services ", f + " failed unit(s)")
 }
 
-fn count_updates() {
-  # best-effort: number of upgradable packages
-  let n = out("sh -c 'apt-get -s -o Debug::NoLocking=true upgrade 2>/dev/null | grep -c ^Inst'")
-  sh(sudo() + "sh -c 'mkdir -p /var/lib/larzos; echo " + q(n) + " > /var/lib/larzos/updates' 2>/dev/null")
-  return n
-}
-
+# ------------------------------------------------------------------ dispatch
 let a = args
 if len(a) == 0 { usage(); exit(0) }
 let cmd = a[0]
@@ -106,81 +98,280 @@ let rest = a[1:]
 
 if cmd == "help" or cmd == "-h" or cmd == "--help" { usage() }
 
+# ---- software ----
 else if cmd == "install" or cmd == "add" {
   if len(rest) == 0 { print("larz install <pkg>..."); exit(1) }
   need("apt-get")
+  # metered packages declare a price in their control's XB-Larz-Price field
+  for p in rest {
+    let meta = out("apt-cache show " + q(p) + " 2>/dev/null")
+    let tag = ""
+    for ln in meta.split("\n") {
+      if ln.starts_with("XB-Larz-Price:") { tag = ln[14:].strip() }
+    }
+    if tag != "" {
+      let amt = float(tag.replace("$", "").replace("/mo", "").strip())
+      print(D + p + " is a metered package: " + wal.fmt(amt) + R)
+      let chk = wal.check("pkg", amt)
+      if not chk["ok"] { print("larz: " + chk["reason"]); exit(1) }
+      if not confirm("charge " + wal.fmt(amt) + " to the wallet and install " + p + "?") { exit(0) }
+      wal.debit("pkg", amt, p, "metered package install")
+    }
+  }
   head("installing " + join(rest, " "))
   exit(sh(sudo() + "apt-get install -y " + qjoin(rest)))
 }
 else if cmd == "remove" or cmd == "rm" {
   if len(rest) == 0 { print("larz remove <pkg>..."); exit(1) }
-  need("apt-get")
-  head("removing " + join(rest, " "))
+  need("apt-get"); head("removing " + join(rest, " "))
   exit(sh(sudo() + "apt-get remove -y " + qjoin(rest)))
 }
 else if cmd == "search" or cmd == "find" {
   if len(rest) == 0 { print("larz search <text>"); exit(1) }
-  need("apt-cache")
-  exit(sh("apt-cache search " + qjoin(rest)))
+  need("apt-cache"); exit(sh("apt-cache search " + qjoin(rest)))
 }
 else if cmd == "update" or cmd == "refresh" {
-  need("apt-get")
-  head("refreshing package lists")
-  let rc = sh(sudo() + "apt-get update")
-  count_updates()
-  exit(rc)
+  need("apt-get"); head("refreshing package lists")
+  let rc = sh(sudo() + "apt-get update"); count_updates(); exit(rc)
 }
 else if cmd == "upgrade" or cmd == "up" {
-  need("apt-get")
-  head("updating everything installed")
+  need("apt-get"); head("updating everything installed")
   sh(sudo() + "apt-get update")
-  let rc = sh(sudo() + "apt-get full-upgrade -y")
-  count_updates()
-  exit(rc)
+  let rc = sh(sudo() + "apt-get full-upgrade -y"); count_updates(); exit(rc)
 }
 else if cmd == "list" {
   exit(sh("dpkg-query -W -f='${Package}\t${Version}\n' | sort"))
 }
-else if cmd == "plan" {
-  need("larz-system")
-  exit(sh("larz-system plan " + qjoin(rest)))
+
+# ---- this machine ----
+else if cmd == "plan"     { need("larz-system"); exit(sh("larz-system plan " + qjoin(rest))) }
+else if cmd == "apply"    { need("larz-system"); head("applying the system spec"); exit(sh(sudo() + "larz-system apply " + qjoin(rest))) }
+else if cmd == "rollback" { need("larz-system"); exit(sh(sudo() + "larz-system rollback " + qjoin(rest))) }
+else if cmd == "status"   { need("larz-system"); exit(sh("larz-system status " + qjoin(rest))) }
+
+else if cmd == "snapshot" {
+  if not is_root() { exit(sh("sudo larz " + join(a, " "))) }
+  let n = gen.create(len(rest) > 0 ? rest[0] : "", "")
+  print("saved generation #" + str(n))
 }
-else if cmd == "apply" {
-  need("larz-system")
-  head("applying the system spec")
-  exit(sh(sudo() + "larz-system apply " + qjoin(rest)))
+else if cmd == "generations" or cmd == "gens" {
+  let gs = gen.list()
+  if len(gs) == 0 { print("no generations yet - " + D + "larz snapshot" + R); exit(0) }
+  let cur = gen.current()
+  for g in gs {
+    let mark = g["n"] == cur ? C + " *" + R : "  "
+    print(mark + " #" + str(g["n"]) + "  " + g["ts"] + "  " + g.get("name", "") +
+          (g.get("note", "") == "" ? "" : "  " + D + g["note"] + R))
+  }
 }
-else if cmd == "rollback" {
-  need("larz-system")
-  exit(sh(sudo() + "larz-system rollback " + qjoin(rest)))
+else if cmd == "switch" {
+  if len(rest) == 0 { print("larz switch <n>"); exit(1) }
+  if not is_root() { exit(sh("sudo larz " + join(a, " "))) }
+  head("switching to generation #" + rest[0] + " (a pre-switch snapshot is taken)")
+  let res = gen.restore(int(rest[0]))
+  print(res["ok"] ? "now on generation #" + str(res["n"]) : ("larz: " + res["error"]))
 }
-else if cmd == "status" {
-  need("larz-system")
-  exit(sh("larz-system status " + qjoin(rest)))
+else if cmd == "diff" {
+  if len(rest) > 0 { print(gen.diff(int(rest[0]))) }
+  else { need("larz-system"); exit(sh("larz-system plan " + q("/etc/larzos/system.lz"))) }
 }
+
+# ---- money ----
+else if cmd == "wallet" {
+  let c = wal.conf()
+  banner(); print("")
+  print("  balance   " + C + wal.fmt(wal.balance()) + R + "   " + D + "(" + c["provider"] + ")" + R)
+  print("  this month  spent " + wal.fmt6(wal.spent("", "")) + "   credited " + wal.fmt(wal.credited("")))
+  let es = wal.entries("")
+  let start = len(es) > 8 ? len(es) - 8 : 0
+  print(D + "  recent:" + R)
+  for i in range(len(es) - start) {
+    let e = es[start + i]
+    let sign = e["kind"] == "credit" ? "+" : "-"
+    print("    " + e["ts"][0:10] + "  " + sign + wal.fmt6(e["amount"]) + "  " +
+          e.get("category", "") + "  " + D + e.get("note", "") + R)
+  }
+}
+else if cmd == "pay" {
+  if len(rest) < 2 { print("larz pay <who> <amount> [note]"); exit(1) }
+  let amt = float(rest[1].replace("$", ""))
+  let chk = wal.check("transfer", amt)
+  if not chk["ok"] { print("larz: " + chk["reason"]); exit(1) }
+  if not confirm("pay " + rest[0] + " " + wal.fmt(amt) + "?") { exit(0) }
+  let e = wal.pay(rest[0], amt, len(rest) > 2 ? join(rest[2:], " ") : nil)
+  print("paid. " + wal.fmt(e["amount"]) + " -> " + e["ref"])
+}
+else if cmd == "topup" {
+  if len(rest) == 0 { print("larz topup <amount>"); exit(1) }
+  let e = wal.credit(float(rest[0].replace("$", "")), "manual", "larz topup")
+  print("credited " + wal.fmt(e["amount"]) + "  (balance " + wal.fmt(wal.balance()) + ")")
+  print(D + "note: for a real top-up, set provider = \"cryptolarz\" in /etc/larzos/wallet.toml" + R)
+}
+else if cmd == "budget" {
+  if len(rest) == 0 {
+    let b = wal.conf()["budget"]
+    print(C + "monthly budgets" + R)
+    for cat in ["ai", "api", "pkg", "cloud", "transfer"] {
+      let cap = wal.budget_for(cat)
+      print("  " + cat + "\t" + (cap < 0.0 ? D + "uncapped" + R : wal.fmt(cap)) +
+            "\tused " + wal.fmt6(wal.spent(cat, "")))
+    }
+    print(D + "set: larz budget <category> <amount>   (or a 'budget' block in system.lz)" + R)
+  } else {
+    if len(rest) < 2 { print("larz budget <category> <amount>"); exit(1) }
+    if not is_root() { exit(sh("sudo larz " + join(a, " "))) }
+    let bp = "/etc/larzos/budget.toml"
+    let cur = file_exists(bp) ? read_file(bp) : "[budget]\n"
+    if not cur.contains("[budget]") { cur = "[budget]\n" + cur }
+    # drop an existing line for this category, then append
+    let kept = []
+    for ln in cur.split("\n") { if not ln.strip().starts_with(rest[0] + " ") and not ln.strip().starts_with(rest[0] + "=") { kept.push(ln) } }
+    write_file(bp, join(kept, "\n").strip() + "\n" + rest[0] + " = " + rest[1].replace("$", "") + "\n")
+    print("budget: " + rest[0] + " capped at " + wal.fmt(float(rest[1].replace("$", ""))) + "/mo")
+  }
+}
+else if cmd == "spend" {
+  let cat = len(rest) > 0 ? rest[0] : ""
+  let month = len(rest) > 1 ? rest[1] : ""
+  banner(); print("")
+  if cat != "" {
+    print("  " + cat + " spend " + (month == "" ? "this month" : month) + ": " + wal.fmt6(wal.spent(cat, month)))
+  } else {
+    let tot = 0.0
+    for c in ["ai", "api", "pkg", "cloud", "transfer"] {
+      let s = wal.spent(c, month)
+      tot = tot + s
+      print("  " + c + "\t" + wal.fmt6(s))
+    }
+    print("  " + D + "total\t" + wal.fmt6(tot) + R)
+  }
+}
+
+# ---- ai ----
 else if cmd == "ai" {
   need("larz-aid")
-  if len(rest) == 0 { print("larz ai <text>   |   larz ai route <task>   |   larz ai serve"); exit(1) }
-  exit(sh("larz-aid " + qjoin(rest)))
+  if len(rest) == 0 { print("larz ai <text>  |  larz ai route|serve|models|pull <...>"); exit(1) }
+  if rest[0] == "route" or rest[0] == "serve" or rest[0] == "models" or rest[0] == "pull" or rest[0] == "health" {
+    exit(sh("larz-aid " + qjoin(rest)))
+  }
+  exit(ai.show(ai.ask(join(rest, " "), "", "")))
 }
+else if cmd == "ask" {
+  if len(rest) == 0 { print("larz ask <question>"); exit(1) }
+  let ctx = "Host facts: " + out("uname -a") + " | " + osf("PRETTY_NAME") +
+            " | packages: " + out("dpkg-query -f '${Package} ' -W 2>/dev/null | wc -w")
+  exit(ai.show(ai.ask(join(rest, " "), "", "You are the LarzOS assistant. Be concise. " + ctx)))
+}
+else if cmd == "explain" {
+  let text = ""
+  if len(rest) > 0 and file_exists(rest[0]) { text = read_file(rest[0]) }
+  else { text = capture("cat") }
+  if text.strip() == "" { print("larz explain <file>   |   <command> | larz explain"); exit(1) }
+  exit(ai.show(ai.ask("Explain this clearly and briefly:\n\n" + text[0:6000], "",
+                      "You are the LarzOS assistant explaining a file, command output or error.")))
+}
+else if cmd == "why" {
+  if len(rest) == 0 { print("larz why <topic>   e.g. 'boot slow', 'disk full', '<unit> failing'"); exit(1) }
+  let topic = join(rest, " ")
+  let ctx = ""
+  if topic.contains("boot") { ctx = out("systemd-analyze blame 2>/dev/null | head -15") }
+  else if topic.contains("disk") or topic.contains("full") { ctx = out("df -h; echo; du -xhd1 / 2>/dev/null | sort -rh | head -12") }
+  else if topic.contains("fail") or topic.contains("service") or topic.contains("unit") {
+    ctx = out("systemctl --failed --no-pager; echo; journalctl -p err -b --no-pager | tail -30")
+  }
+  else { ctx = out("uptime; echo; systemctl --failed --no-pager; free -h") }
+  exit(ai.show(ai.ask("Question: why " + topic + "\n\nMachine context:\n" + ctx, "",
+                      "You are the LarzOS assistant. Diagnose from the context. Give the likely cause and one or two concrete next commands.")))
+}
+else if cmd == "do" {
+  if len(rest) == 0 { print("larz do \"<what you want>\""); exit(1) }
+  let goal = join(rest, " ")
+  head("asking the OS how to: " + goal)
+  let sys = "You are the LarzOS agent. The user runs Debian-based LarzOS and configures the machine with /etc/larzos/system.lz (Larzscript) plus apt. " +
+            "Reply with a short plan then a single fenced ```sh block of the exact commands to run (idempotent, non-interactive, using apt-get -y and sudo where needed). No prose after the block."
+  let res = ai.ask(goal, "code", sys)
+  if not res["ok"] { print("larz: " + res.get("error", "failed")); exit(1) }
+  print(res["text"])
+  let t = res["text"]
+  let s1 = t.find("```sh")
+  if s1 < 0 { s1 = t.find("```bash") }
+  if s1 < 0 { s1 = t.find("```") }
+  if s1 < 0 { print("\n" + D + "(no runnable block - nothing to do)" + R); exit(0) }
+  let after = t[s1:]
+  let nl = after.find("\n")
+  let body = after[nl + 1:]
+  let e1 = body.find("```")
+  let script = e1 < 0 ? body : body[0:e1]
+  print("\n" + C + "commands:" + R)
+  print(script)
+  if not confirm("run this?") { exit(0) }
+  gen.create("pre-do", "auto before: " + goal[0:40])
+  let tmp = "/tmp/larz-do.sh"
+  write_file(tmp, script)
+  exit(sh(sudo() + "sh " + tmp))
+}
+
+# ---- fleet ----
+else if cmd == "fleet" {
+  if len(rest) == 0 {
+    let ns = fleet.nodes()
+    if len(keys(ns)) == 0 { print("no nodes - " + D + "larz fleet add <name> <user@host>" + R); exit(0) }
+    for k in keys(ns) { print("  " + k + "\t" + ns[k]) }
+    exit(0)
+  }
+  let sub = rest[0]
+  if sub == "add" {
+    if len(rest) < 3 { print("larz fleet add <name> <user@host>"); exit(1) }
+    fleet.add(rest[1], rest[2]); print("added " + rest[1])
+  } else if sub == "rm" {
+    if len(rest) < 2 { print("larz fleet rm <name>"); exit(1) }
+    fleet.rm(rest[1]); print("removed " + rest[1])
+  } else if sub == "apply" {
+    head("pushing this machine's spec to the fleet")
+    for r in fleet.apply(len(rest) > 1 ? rest[1] : "") {
+      print("  " + (r["ok"] ? C + "ok  " + R : "\033[1;31mfail\033[0m") + " " + r["node"])
+    }
+  } else if sub == "run" {
+    if len(rest) < 2 { print("larz fleet run <cmd>"); exit(1) }
+    for r in fleet.run_on("", join(rest[1:], " ")) {
+      print(C + "== " + r["node"] + " ==" + R + "\n" + r["output"])
+    }
+  } else { print("larz fleet [add|rm|apply|run]") }
+}
+else if cmd == "share" {
+  let res = fleet.share(len(rest) > 0 ? join(rest, " ") : nil)
+  if res["ok"] { print("shared: " + C + res["url"] + R + "\n" + D + "others: larz adopt " + res["id"] + R) }
+  else { print("larz: " + res["error"]) }
+}
+else if cmd == "adopt" {
+  if len(rest) == 0 { print("larz adopt <id|url>"); exit(1) }
+  let res = fleet.fetch(rest[0])
+  if not res["ok"] { print("larz: " + res["error"]); exit(1) }
+  let tmp = "/tmp/larz-adopt.lz"
+  write_file(tmp, res["spec"])
+  need("larz-system")
+  print(C + "this machine would become:" + R)
+  sh("larz-system plan " + tmp)
+  if not confirm("\napply this spec to this machine?") { exit(0) }
+  gen.create("pre-adopt", "auto before adopt " + rest[0])
+  exit(sh(sudo() + "cp " + tmp + " /etc/larzos/system.lz && " + sudo() + "larz-system apply /etc/larzos/system.lz"))
+}
+
+# ---- other ----
+else if cmd == "doctor" or cmd == "check" { doctor() }
 else if cmd == "rebrand" {
   need("larz-rebrand")
   let sub = len(rest) > 0 ? rest : ["status"]
-  let w = (sub[0] == "status") ? "" : sudo()
-  exit(sh(w + "larz-rebrand " + qjoin(sub)))
+  exit(sh((sub[0] == "status" ? "" : sudo()) + "larz-rebrand " + qjoin(sub)))
 }
-else if cmd == "doctor" or cmd == "check" { doctor() }
 else if cmd == "version" or cmd == "--version" {
   banner()
-  for p in ["larzscript", "larz-system", "larz-ai", "larzsh", "larz-branding"] {
+  for p in ["larzscript", "larz", "larz-system", "larz-ai", "larzsh", "larz-branding"] {
     let v = out("dpkg-query -W -f='${Version}' " + p + " 2>/dev/null")
     if v != "" { print("  " + p + " " + v) }
   }
 }
-else if cmd == "apt" {
-  need("apt-get")
-  exit(sh(sudo() + "apt-get " + qjoin(rest)))
-}
+else if cmd == "apt" { need("apt-get"); exit(sh(sudo() + "apt-get " + qjoin(rest))) }
 else {
   print("larz: unknown command '" + cmd + "'  (try: larz help)")
   exit(1)

@@ -13,7 +13,7 @@ pkg.package({
   "arch":       "all",
   "section":    "admin",
   "depends":    ["larzscript"],
-  "conffiles":  ["/etc/larzos/system.lz"],
+  "conffiles":  ["/etc/larzos/system.lz", "/etc/larzos/wallet.toml"],
   "build":      [],
   "install": [
     # the shared LarzOS Larzscript library root - engine, modules, and the
@@ -28,7 +28,8 @@ pkg.package({
     "install -Dm755 files/larz-system  $DESTDIR/usr/bin/larz-system",
     "install -Dm755 files/larz-pkg     $DESTDIR/usr/bin/larz-pkg",
     "install -Dm755 files/larz-install.sh $DESTDIR/usr/bin/larz-install",
-    # default spec + state dirs
-    "install -Dm644 files/system.lz $DESTDIR/etc/larzos/system.lz",
+    # default spec + wallet config
+    "install -Dm644 files/system.lz  $DESTDIR/etc/larzos/system.lz",
+    "install -Dm644 files/wallet.toml $DESTDIR/etc/larzos/wallet.toml",
   ],
 })

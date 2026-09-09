@@ -56,6 +56,14 @@ larzos.system({
 
   "ai": {
     "local_models": ["qwen2.5-coder:7b"],
-    "gateway":      "https://gateway.larzpay.com",
+    "gateway":      "https://gateway.larzos.com",
+  },
+
+  # Monthly spend caps, enforced by the OS wallet (larz budget / larz spend).
+  # A gateway AI call that would breach "ai" is refused; metered packages
+  # check "pkg". Omit a category to leave it uncapped.
+  "budget": {
+    "ai":  5.00,
+    "api": 10.00,
   },
 })

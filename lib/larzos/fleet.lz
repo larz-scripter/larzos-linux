@@ -1,0 +1,103 @@
+# larzos/fleet - your machines as one set, and machine-sharing.
+#
+# Registry: /etc/larzos/fleet.toml
+#   [nodes]
+#   laptop = "me@laptop.local"
+#   vps    = "root@203.0.113.9"
+#
+# `larz fleet apply` pushes this machine's system.lz to a node and converges
+# it. `larz share` publishes a sanitised system.lz; `larz adopt <id>` pulls
+# one and applies it here.
+
+import "toml" as toml
+import "json" as json
+
+let FCONF = env("LARZOS_FLEET_CONF", "/etc/larzos/fleet.toml")
+let HUB   = env("LARZOS_HUB", "https://larzos.com/larzos-linux/m")
+let SPEC  = "/etc/larzos/system.lz"
+
+fn _shq(s) { return "'" + str(s).replace("'", "'\\''") + "'" }
+
+fn nodes() {
+  if not file_exists(FCONF) { return {} }
+  let c = toml.parse(read_file(FCONF))
+  return c.has("nodes") ? c["nodes"] : {}
+}
+
+fn _write(ns) {
+  write_file(FCONF, toml.stringify({"nodes": ns}))
+}
+
+fn add(name, target) { let ns = nodes(); ns[name] = target; _write(ns); return ns }
+fn rm(name)          { let ns = nodes(); if ns.has(name) { ns.remove(name) } _write(ns); return ns }
+
+fn _targets(name) {
+  let ns = nodes()
+  if name != nil and name != "" {
+    return ns.has(name) ? [ns[name]] : []
+  }
+  let out = []
+  for k in keys(ns) { out.push(ns[k]) }
+  return out
+}
+
+fn apply(name) {
+  let res = []
+  for t in _targets(name) {
+    run("scp -q " + SPEC + " " + _shq(t + ":/tmp/larzos-system.lz"))
+    let rc = run("ssh " + _shq(t) + " 'sudo larz-system apply /tmp/larzos-system.lz'")
+    res.push({"node": t, "ok": rc == 0})
+  }
+  return res
+}
+
+fn run_on(name, cmd) {
+  let res = []
+  for t in _targets(name) {
+    let out = capture("ssh " + _shq(t) + " " + _shq(cmd) + " 2>&1")
+    res.push({"node": t, "output": out})
+  }
+  return res
+}
+
+# ---- machine sharing ----
+
+# very light secret scrub - drop lines that look like they carry a credential
+fn _sanitise(text) {
+  let out = []
+  for ln in text.split("\n") {
+    let low = ln
+    if low.contains("password") or low.contains("secret") or low.contains("api_key")
+       or low.contains("apikey") or low.contains("token") or low.contains("PRIVATE") {
+      out.push("# [redacted for sharing] " + ln.strip())
+    } else {
+      out.push(ln)
+    }
+  }
+  return join(out, "\n")
+}
+
+fn share(note) {
+  if not file_exists(SPEC) { return {"ok": false, "error": "no " + SPEC} }
+  let body = json.stringify({"spec": _sanitise(read_file(SPEC)),
+                             "note": note == nil ? "" : note,
+                             "host": capture("uname -n").strip()})
+  let out = capture("curl -fsS --max-time 15 -H 'Content-Type: application/json' " +
+                    "-X POST --data " + _shq(body) + " " + _shq(HUB) + " 2>/dev/null")
+  if out == "" { return {"ok": false, "error": "could not reach the machine hub"} }
+  let j = json.parse(out)
+  return {"ok": true, "id": j.get("id", ""), "url": j.get("url", HUB + "/" + j.get("id", ""))}
+}
+
+fn fetch(id_or_url) {
+  let url = id_or_url.contains("://") ? id_or_url : (HUB + "/" + id_or_url)
+  if not url.ends_with(".lz") and not url.contains("/m/") { url = url }
+  let raw = capture("curl -fsSL --max-time 15 " + _shq(url) + " 2>/dev/null")
+  if raw == "" { return {"ok": false, "error": "nothing at " + url} }
+  # hub returns JSON {spec:...}; a raw .lz is used as-is
+  if raw.strip().starts_with("{") {
+    let j = json.parse(raw)
+    return {"ok": true, "spec": j.get("spec", "")}
+  }
+  return {"ok": true, "spec": raw}
+}

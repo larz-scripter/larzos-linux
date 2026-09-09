@@ -1,0 +1,32 @@
+# larzos/aihelp - a thin client to larz-aid for the `larz` AI verbs.
+# Keeps routing, budget and metering in one place (larz-aid); this just asks.
+
+import "json" as json
+
+fn _shq(s) { return "'" + str(s).replace("'", "'\\''") + "'" }
+
+# ask the OS model router. returns {ok, text, backend, model, cost, error}
+fn ask(prompt, task, system) {
+  if run("command -v larz-aid >/dev/null 2>&1") != 0 {
+    return {"ok": false, "error": "larz-ai is not installed (larz install larz-ai)"}
+  }
+  let req = {"prompt": prompt, "task": task == nil ? "" : task}
+  if system != nil and system != "" { req["system"] = system }
+  let out = capture("larz-aid chat " + _shq(json.stringify(req)) + " 2>/dev/null")
+  if out == "" { return {"ok": false, "error": "larz-aid returned nothing"} }
+  return json.parse(out)
+}
+
+# print a completion for a CLI verb, with a footer line about backend + cost
+fn show(res) {
+  if not res["ok"] {
+    print("larz: " + res.get("error", "the model call failed"))
+    return 1
+  }
+  print(res["text"])
+  let cost = res.get("cost", 0.0)
+  let foot = "\033[0;90m— " + res.get("backend", "?") + "/" + res.get("model", "?")
+  if cost > 0.0 { foot = foot + "  ~$" + str(cost) }
+  print(foot + "\033[0m")
+  return 0
+}

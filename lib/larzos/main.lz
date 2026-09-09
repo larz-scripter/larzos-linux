@@ -43,7 +43,7 @@ fn _norm_audio(a) {
 
 fn _norm_ai(ai) {
   _default(ai, "local_models", [])
-  _default(ai, "gateway", "")
+  _default(ai, "gateway", "https://gateway.larzos.com")
   return ai
 }
 
@@ -61,6 +61,7 @@ fn system(spec) {
   _default(spec, "units", {})
   _default(spec, "audio", {})
   _default(spec, "ai", {})
+  _default(spec, "budget", {})
 
   let users = []
   for u in spec["users"] { users.push(_norm_user(u)) }
@@ -86,6 +87,7 @@ fn system(spec) {
     "units": spec["units"],
     "audio": spec["audio"],
     "ai": spec["ai"],
+    "budget": spec["budget"],
   }
 
   let dest = env("LARZOS_SPEC_OUT", "")

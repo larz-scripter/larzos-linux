@@ -25,6 +25,6 @@ larzos.system({
 
   "ai": {
     "local_models": [],
-    "gateway": "https://gateway.larzpay.com",
+    "gateway": "https://gateway.larzos.com",
   },
 })

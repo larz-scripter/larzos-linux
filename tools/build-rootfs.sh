@@ -93,7 +93,7 @@ larzos.system({
   "packages": ["larz-branding", "larz", "larz-system", "larz-ai", "larzsh", "git", "curl"],
   "services": { "larz-ai": "enabled" },
   "audio":    { "profile": "off" },
-  "ai":       { "local_models": [], "gateway": "https://gateway.larzpay.com" },
+  "ai":       { "local_models": [], "gateway": "https://gateway.larzos.com" },
 })
 EOF
 

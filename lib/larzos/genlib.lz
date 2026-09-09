@@ -1,0 +1,87 @@
+# larzos/genlib - system generations. A generation is a restorable snapshot
+# of the machine's *configuration*: /etc, the package selection, and the last
+# applied system.lz. Take one before a risky change; `larz switch <n>` to go
+# back. Config-level, not a full filesystem image - deliberately cheap.
+#
+# Layout: /var/lib/larzos/generations/<n>/
+#   meta.json        {n, ts, name, note, kernel}
+#   etc.tar.gz       a copy of /etc
+#   selections       dpkg --get-selections
+#   spec.json        /var/lib/larzos/spec.json at snapshot time (if any)
+
+import "json" as json
+
+let GDIR = env("LARZOS_GEN_DIR", "/var/lib/larzos/generations")
+
+fn _nums() {
+  if not file_exists(GDIR) { return [] }
+  let ns = []
+  for d in listdir(GDIR) {
+    if file_exists(GDIR + "/" + d + "/meta.json") { ns.push(int(d)) }
+  }
+  return sorted(ns)
+}
+
+fn list() {
+  let out = []
+  for n in _nums() {
+    out.push(json.parse(read_file(GDIR + "/" + str(n) + "/meta.json")))
+  }
+  return out
+}
+
+fn current() {
+  let ns = _nums()
+  return len(ns) == 0 ? 0 : ns[len(ns) - 1]
+}
+
+fn create(name, note) {
+  let n = current() + 1
+  let g = GDIR + "/" + str(n)
+  run("mkdir -p " + g)
+  run("tar czf " + g + "/etc.tar.gz --warning=no-file-changed -C / etc 2>/dev/null || true")
+  run("dpkg --get-selections > " + g + "/selections 2>/dev/null || true")
+  run("cp /var/lib/larzos/spec.json " + g + "/spec.json 2>/dev/null || true")
+  let meta = {"n": n, "ts": capture("date -u +%Y-%m-%dT%H:%M:%SZ").strip(),
+              "name": name == nil ? "" : name, "note": note == nil ? "" : note,
+              "kernel": capture("uname -r").strip()}
+  write_file(g + "/meta.json", json.stringify(meta))
+  return n
+}
+
+fn restore(n) {
+  let g = GDIR + "/" + str(n)
+  if not file_exists(g + "/meta.json") { return {"ok": false, "error": "no generation " + str(n)} }
+  # snapshot the current state first, so restore is itself reversible
+  create("pre-switch", "auto before switch to " + str(n))
+  if file_exists(g + "/etc.tar.gz") {
+    run("tar xzf " + g + "/etc.tar.gz -C / 2>/dev/null")
+  }
+  if file_exists(g + "/selections") {
+    run("dpkg --set-selections < " + g + "/selections 2>/dev/null")
+    run("DEBIAN_FRONTEND=noninteractive apt-get -y dselect-upgrade 2>/dev/null || true")
+  }
+  # converge onto whatever spec that generation carried
+  if file_exists("/etc/larzos/system.lz") {
+    run("larz-system apply /etc/larzos/system.lz 2>/dev/null || true")
+  }
+  return {"ok": true, "n": n}
+}
+
+fn diff(n) {
+  let g = GDIR + "/" + str(n)
+  if not file_exists(g + "/meta.json") { return "no generation " + str(n) }
+  let out = ""
+  run("mkdir -p /tmp/larzos-gendiff && rm -rf /tmp/larzos-gendiff/*")
+  if file_exists(g + "/etc.tar.gz") {
+    run("tar xzf " + g + "/etc.tar.gz -C /tmp/larzos-gendiff etc/larzos 2>/dev/null || true")
+    out = out + capture("diff -ruN /tmp/larzos-gendiff/etc/larzos /etc/larzos 2>/dev/null | head -120")
+  }
+  let a = g + "/selections"
+  if file_exists(a) {
+    run("dpkg --get-selections > /tmp/larzos-gendiff/sel.now")
+    let pd = capture("diff " + a + " /tmp/larzos-gendiff/sel.now 2>/dev/null | grep -E '^[<>]' | head -40")
+    if pd != "" { out = out + "\n--- packages ---\n" + pd }
+  }
+  return out == "" ? "(no differences in /etc/larzos or package selection)" : out
+}

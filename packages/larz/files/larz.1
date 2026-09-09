@@ -7,66 +7,128 @@ larz \- the LarzOS command
 .RI [ args ]
 .SH DESCRIPTION
 .B larz
-is the single entry point for running a LarzOS machine: installing software,
-previewing and applying the system spec
+is the single entry point for running a LarzOS machine: software, the
+declarative system spec
 .RI ( /etc/larzos/system.lz ),
-talking to the AI model router, and checking the system over. It is a thin,
-LarzOS\-styled front end to
+money, the AI, configuration generations and your fleet. It is a LarzOS\-styled
+front end to
 .BR apt\-get (8),
 .BR larz-system (8)
 and
 .BR larz-aid (8),
 which all remain usable directly.
-.SH VERBS
+.SH SOFTWARE
 .TP
-.B install " \fIpkg\fR..."
-Install packages.
+.B install \fIpkg\fR... , remove \fIpkg\fR... , search \fItext\fR
+Add, remove or find software. A package that declares
+.B XB-Larz-Price
+is metered: the amount is checked against the
+.B pkg
+budget and charged to the wallet on install.
 .TP
-.B remove " \fIpkg\fR..."
-Remove packages.
+.B update , upgrade , list
+Refresh lists, update everything, list what is installed.
+.SH THIS MACHINE
 .TP
-.B search " \fItext\fR"
-Search available packages.
+.B plan " [\fIsystem.lz\fR] , apply [\fIsystem.lz\fR] , rollback , status"
+Preview, converge, undo, and drift for the system spec.
 .TP
-.B update
-Refresh the package lists.
+.B snapshot " [\fIname\fR]"
+Save a configuration generation (\fI/etc\fR, package selection, applied spec).
 .TP
-.B upgrade
-Update every installed package.
+.B generations
+List generations; the current one is marked.
 .TP
-.B list
-List installed packages.
+.B switch " \fIn\fR"
+Restore generation \fIn\fR (a pre\-switch snapshot is taken first).
 .TP
-.B plan " [\fIsystem.lz\fR]"
-Show what applying the spec would change. Touches nothing.
+.B diff " [\fIn\fR]"
+Machine vs. the spec, or vs. generation \fIn\fR.
+.SH MONEY
+The machine has a wallet. AI usage, metered packages and API calls are spends;
+they are capped by
+.B larz budget
+(or a
+.B budget
+block in system.lz) and receipted under
+.IR /var/lib/larzos/wallet .
 .TP
-.B apply " [\fIsystem.lz\fR]"
-Converge the machine onto the spec.
+.B wallet
+Balance, provider and recent ledger.
 .TP
-.B rollback
-Re\-apply the previous spec.
+.B pay " \fIwho\fR \fIamount\fR [\fInote\fR]"
+Send money. With
+.B provider = local
+this records an entry; a real provider (cryptolarz, larzpay) settles it.
 .TP
-.B status
-Drift and a one\-line summary.
+.B topup " \fIamount\fR"
+Credit the local balance.
+.TP
+.B budget " [\fIcategory\fR \fIamount\fR]"
+Show caps and spend, or set a monthly cap for a category
+.RB ( ai ", " api ", " pkg ", " cloud ", " transfer ).
+.TP
+.B spend " [\fIcategory\fR] [\fImonth\fR]"
+Spend breakdown.
+.SH AI
 .TP
 .B ai " \fItext\fR"
-Ask the model router. \fBlarz ai route \fItask\fR reports which backend serves a task.
+Ask the OS model router. \fBlarz ai route|serve|models|pull\fR reach
+.BR larz-aid (8)
+directly.
+.TP
+.B do " \fB"\fR\fIgoal\fB"\fR"
+Ask the OS how to achieve \fIgoal\fR; it proposes commands, you approve, it runs
+them (after a snapshot).
+.TP
+.B explain " [\fIfile\fR]"
+Explain a file, or piped command output / an error.
+.TP
+.B why " \fItopic\fR"
+Diagnose from live machine context (e.g. \fBlarz why boot slow\fR).
+.TP
+.B ask " \fIquestion\fR"
+Q&A with this machine's facts as context.
+.SH FLEET
+.TP
+.B fleet " [add|rm \fIname\fR \fIuser@host\fR]"
+Manage the node registry
+.RI ( /etc/larzos/fleet.toml ).
+.TP
+.B fleet apply " [\fIname\fR]"
+Push this machine's system.lz to a node (or all) and converge it.
+.TP
+.B fleet run " \fIcmd\fR"
+Run a command on every node.
+.TP
+.B share
+Publish a sanitised system.lz to the LarzOS machine hub; prints an id.
+.TP
+.B adopt " \fIid\fR|\fIurl\fR"
+Fetch a shared spec, show the plan, and (on confirm) make this machine it.
+.SH OTHER
 .TP
 .B doctor
-Check identity, engine, AI router, package sources, disk and services.
+Check identity, engine, AI router, packages, wallet, generations, disk, services.
 .TP
 .B rebrand " [status|apply|restore]"
 Re\-assert (or remove) the LarzOS identity.
 .TP
 .B version
-Show component versions.
+Component versions.
 .TP
 .B apt " \fIargs\fR"
 Pass \fIargs\fR straight to \fBapt\-get\fR.
 .SH FILES
 .TP
 .I /etc/larzos/system.lz
-The machine, described in Larzscript.
+The machine, in Larzscript.
+.TP
+.I /etc/larzos/wallet.toml
+Wallet provider and budget defaults.
+.TP
+.I /var/lib/larzos/generations/
+Saved configuration generations.
 .SH SEE ALSO
 .BR larz-system (8),
 .BR larz-aid (8),

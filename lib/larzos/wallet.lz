@@ -1,0 +1,141 @@
+# larzos/wallet - the money core of LarzOS.
+#
+# The machine has a wallet. Software, API calls and AI usage are spends; they
+# are metered here, capped by the budget in system.lz, and receipted. This
+# module is the shared library behind `larz wallet` / `larz pay` /
+# `larz budget` / `larz spend` and the budget check inside `larz-aid`.
+#
+# Storage (all under /var/lib/larzos/wallet, world-readable, root-writable):
+#   ledger.jsonl              append-only  {ts,month,kind,category,amount,...}
+#   balance                   cached local balance (local provider only)
+#   receipts/<ts>.txt         one human receipt per spend
+# Config: /etc/larzos/wallet.toml  (+ [budget] overlaid from /etc/larzos/budget.toml)
+
+import "json" as json
+import "toml" as toml
+
+let WCONF  = env("LARZOS_WALLET_CONF", "/etc/larzos/wallet.toml")
+let BCONF  = env("LARZOS_BUDGET_CONF", "/etc/larzos/budget.toml")
+let WDIR   = env("LARZOS_WALLET_DIR",  "/var/lib/larzos/wallet")
+
+fn _shq(s) { return "'" + str(s).replace("'", "'\\''") + "'" }
+fn now_iso()  { return capture("date -u +%Y-%m-%dT%H:%M:%SZ").strip() }
+fn this_month() { return capture("date -u +%Y-%m").strip() }
+fn money(x)   { return int(x * 100.0 + (x < 0.0 ? -0.5 : 0.5)) / 100.0 }
+fn micro(x)   { return int(x * 1000000.0 + (x < 0.0 ? -0.5 : 0.5)) / 1000000.0 }
+fn fmt(x)     { return "$" + capture("printf '%.2f' " + str(money(x))).strip() }
+fn fmt6(x)    { return "$" + capture("printf '%.6f' " + str(micro(x))).strip() }  # metering view
+
+fn conf() {
+  let c = file_exists(WCONF) ? toml.parse(read_file(WCONF)) : {}
+  if not c.has("provider") { c["provider"] = "local" }
+  if not c.has("currency") { c["currency"] = "USD" }
+  if not c.has("account")  { c["account"]  = "" }
+  if not c.has("budget")   { c["budget"]   = {} }
+  # budget module writes /etc/larzos/budget.toml; it wins
+  if file_exists(BCONF) {
+    let b = toml.parse(read_file(BCONF))
+    let src = b.has("budget") ? b["budget"] : b
+    for k in keys(src) { c["budget"][k] = src[k] }
+  }
+  return c
+}
+
+fn ledger_path() { return WDIR + "/ledger.jsonl" }
+
+fn _ensure() { run("mkdir -p " + WDIR + "/receipts") }
+
+fn entries(month) {
+  let p = ledger_path()
+  if not file_exists(p) { return [] }
+  let out = []
+  for ln in read_file(p).strip().split("\n") {
+    if ln == "" { continue }
+    let e = json.parse(ln)
+    if month == "" or month == nil or e.get("month", "") == month { out.push(e) }
+  }
+  return out
+}
+
+fn _sum(month, kind, category) {
+  let t = 0.0
+  for e in entries(month) {
+    if e.get("kind", "") != kind { continue }
+    if category != "" and e.get("category", "") != category { continue }
+    t = t + e.get("amount", 0.0)
+  }
+  return micro(t)
+}
+
+fn spent(category, month)   { return _sum(month == "" ? this_month() : month, "debit", category) }
+fn credited(month)          { return _sum(month == "" ? this_month() : month, "credit", "") }
+
+fn balance() {
+  let c = conf()
+  if c["provider"] == "local" {
+    # lifetime credits - lifetime debits, plus any seed in balance file
+    let seed = file_exists(WDIR + "/balance") ? float(read_file(WDIR + "/balance").strip()) : 0.0
+    return money(seed + _sum("", "credit", "") - _sum("", "debit", ""))
+  }
+  # remote providers: best-effort query, fall back to local math
+  return money(_sum("", "credit", "") - _sum("", "debit", ""))
+}
+
+fn budget_for(category) {
+  let b = conf()["budget"]
+  if b.has(category) { return float(b[category]) }
+  return -1.0
+}
+
+# Would spending `amount` on `category` this month breach the cap?
+fn check(category, amount) {
+  let cap = budget_for(category)
+  let used = spent(category, "")
+  if cap < 0.0 {
+    return {"ok": true, "cap": -1.0, "spent": used, "remaining": -1.0, "reason": ""}
+  }
+  let remaining = money(cap - used)
+  let ok = (used + amount) <= cap + 0.0001
+  return {"ok": ok, "cap": cap, "spent": used, "remaining": remaining,
+          "reason": ok ? "" : ("category '" + category + "' is capped at " + fmt(cap) +
+                    "/mo; " + fmt(used) + " already used, this would add " + fmt(amount))}
+}
+
+fn _append(e) {
+  _ensure()
+  run("printf '%s\n' " + _shq(json.stringify(e)) + " >> " + ledger_path())
+}
+
+fn _receipt(e) {
+  _ensure()
+  let id = e["ts"].replace(":", "").replace("-", "")
+  let lines = "LarzOS receipt  " + e["ts"] + "\n" +
+              "  " + e["kind"] + "  " + e.get("category", "-") + "  " + fmt(e["amount"]) + " " + e.get("currency", "USD") + "\n" +
+              (e.get("ref", "") == "" ? "" : "  ref:  " + e["ref"] + "\n") +
+              (e.get("note", "") == "" ? "" : "  note: " + e["note"] + "\n")
+  write_file(WDIR + "/receipts/" + id + ".txt", lines)
+}
+
+fn record(kind, category, amount, ref, note) {
+  let e = {"ts": now_iso(), "month": this_month(), "kind": kind,
+           "category": category, "amount": micro(amount),
+           "currency": conf()["currency"], "ref": ref, "note": note}
+  _append(e)
+  _receipt(e)
+  return e
+}
+
+fn debit(category, amount, ref, note)  { return record("debit", category, amount, ref, note) }
+fn credit(amount, ref, note)           { return record("credit", "topup", amount, ref, note) }
+
+# Send money to someone. Local provider = ledger entry only (IOU / offline).
+# Remote providers would call LarzPay / CryptoLarz here.
+fn pay(dest, amount, note) {
+  let c = conf()
+  let tag = c["provider"] + ":" + dest
+  if c["provider"] != "local" and c["account"] != "" {
+    # provider integration point - stubbed to a local record for now
+    tag = tag + " (recorded locally; provider payout not yet wired)"
+  }
+  return record("debit", "transfer", amount, tag, note == nil ? ("pay " + dest) : note)
+}

@@ -19,7 +19,7 @@
 import "json" as json
 
 let VERSION = "0.1.0"
-let MODULES = ["branding", "hostname", "locale", "users", "packages", "systemd", "services", "audio", "ai"]
+let MODULES = ["branding", "hostname", "locale", "users", "packages", "systemd", "services", "audio", "ai", "budget"]
 let DEFAULT_SPEC = "/etc/larzos/system.lz"
 let STATE = "/var/lib/larzos/spec.json"
 

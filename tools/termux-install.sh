@@ -61,7 +61,7 @@ pd sh -eu -c '
 #    (the bind masks the package's /etc/larzos, so seed both files out first)
 mkdir -p "$CONF_DIR"
 [ -f "$CONF_DIR/ai.toml" ] || pd sh -c 'cat /etc/larzos/ai.toml 2>/dev/null' > "$CONF_DIR/ai.toml" || true
-[ -s "$CONF_DIR/ai.toml" ] || printf 'gateway = "https://gateway.larzpay.com"\n[local]\nmodels = []\n' > "$CONF_DIR/ai.toml"
+[ -s "$CONF_DIR/ai.toml" ] || printf 'gateway = "https://gateway.larzos.com"\n[local]\nmodels = []\n' > "$CONF_DIR/ai.toml"
 if [ ! -f "$CONF_DIR/system.lz" ]; then
   pd sh -c 'cat /etc/larzos/system.lz 2>/dev/null' > "$CONF_DIR/system.lz" || true
   [ -s "$CONF_DIR/system.lz" ] || cat > "$CONF_DIR/system.lz" <<'EOF'
@@ -73,7 +73,7 @@ larzos.system({
   "timezone": "UTC",
   "locale":   "en_US.UTF-8",
   "packages": ["git", "curl"],
-  "ai": { "gateway": "https://gateway.larzpay.com" },
+  "ai": { "gateway": "https://gateway.larzos.com" },
 })
 EOF
   say "seeded $CONF_DIR/system.lz"
