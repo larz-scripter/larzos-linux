@@ -1,0 +1,85 @@
+#!/usr/bin/env larzscript
+# machined - the LarzOS machine hub. Runs on larzos.com behind Apache
+# (ProxyPass /larzos-linux/m/ -> 127.0.0.1:8791). Stores shared, sanitised
+# system.lz files so `larz share` / `larz adopt` work.
+#
+#   POST /larzos-linux/m/        {spec,note,host}  -> {id,url}
+#   GET  /larzos-linux/m/<id>                       -> {spec,note,host,ts}
+#   GET  /larzos-linux/m/<id>.lz                    -> raw system.lz
+#   GET  /larzos-linux/m/                           -> HTML gallery (SEO)
+
+import "tcp"  as tcp
+import "json" as json
+
+let PORT = int(env("MACHINED_PORT", "8791"))
+let DIR  = env("MACHINED_DIR", "/var/www/larzos/larzos-linux/m-data")
+let BASE = env("MACHINED_BASE", "https://larzos.com/larzos-linux/m")
+
+fn _id() {
+  let c = "abcdefghijklmnopqrstuvwxyz0123456789"
+  let s = ""
+  let r = capture("head -c 12 /dev/urandom | od -An -tu1").strip().split(" ")
+  for x in r { if x != "" { s = s + c[int(x) % 36] } }
+  return s[0:8]
+}
+
+fn _resp(code, ctype, body) {
+  let st = code == 200 ? "200 OK" : (code == 201 ? "201 Created" : (code == 404 ? "404 Not Found" : "400 Bad Request"))
+  return "HTTP/1.1 " + st + "\r\nContent-Type: " + ctype +
+         "\r\nAccess-Control-Allow-Origin: *\r\nContent-Length: " + str(len(body)) +
+         "\r\nConnection: close\r\n\r\n" + body
+}
+
+fn _body(rq) { let s = rq.find("\r\n\r\n"); return s >= 0 ? rq[s+4:] : "" }
+
+fn _gallery() {
+  run("mkdir -p " + DIR)
+  let rows = ""
+  for f in sorted(listdir(DIR)) {
+    if not f.ends_with(".json") { continue }
+    let d = json.parse(read_file(DIR + "/" + f))
+    let mid = f[0:len(f)-5]
+    rows = rows + "<li><a href=\"" + BASE + "/" + mid + ".lz\"><code>larz adopt " + mid +
+           "</code></a> — " + d.get("note", "(no note)") + " <span class=muted>" + d.get("ts", "") + "</span></li>\n"
+  }
+  return "<!doctype html><meta charset=utf-8><title>LarzOS machines</title>" +
+         "<style>body{font:15px/1.6 system-ui;max-width:720px;margin:40px auto;padding:0 20px}" +
+         "code{background:#eef;padding:1px 5px;border-radius:4px}.muted{color:#889}</style>" +
+         "<h1>Shared LarzOS machines</h1><p>Each is a <code>system.lz</code> someone published with " +
+         "<code>larz share</code>. Make your machine one of them:</p>" +
+         "<pre><code>larz adopt &lt;id&gt;</code></pre><ul>\n" + rows + "</ul>"
+}
+
+fn handle(rq) {
+  let line = rq.split("\r\n")[0]
+  let p = line.split(" ")
+  if len(p) < 2 { return _resp(400, "text/plain", "bad request") }
+  let method = p[0]
+  let path = p[1]
+  let qm = path.find("?")
+  if qm >= 0 { path = path[0:qm] }
+  run("mkdir -p " + DIR)
+
+  if method == "POST" {
+    let d = json.parse(_body(rq))
+    if d.get("spec", "") == "" { return _resp(400, "application/json", "{\"error\":\"spec required\"}") }
+    let mid = _id()
+    d["ts"] = capture("date -u +%Y-%m-%dT%H:%M:%SZ").strip()
+    write_file(DIR + "/" + mid + ".json", json.stringify(d))
+    return _resp(201, "application/json", json.stringify({"id": mid, "url": BASE + "/" + mid}))
+  }
+
+  # GET
+  let tail = path.replace("/larzos-linux/m/", "").replace("/larzos-linux/m", "")
+  if tail == "" or tail == "/" { return _resp(200, "text/html; charset=utf-8", _gallery()) }
+  let raw = tail.ends_with(".lz")
+  let mid = raw ? tail[0:len(tail)-3] : tail
+  let fp = DIR + "/" + mid + ".json"
+  if not file_exists(fp) { return _resp(404, "application/json", "{\"error\":\"not found\"}") }
+  let d = json.parse(read_file(fp))
+  if raw { return _resp(200, "text/plain; charset=utf-8", d.get("spec", "")) }
+  return _resp(200, "application/json", read_file(fp))
+}
+
+print("machined on 127.0.0.1:" + str(PORT) + "  ->  " + DIR)
+tcp.serve(PORT, handle)
