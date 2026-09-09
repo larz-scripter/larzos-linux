@@ -24,6 +24,14 @@ fn package(def) {
   _req(def, "version")
   _req(def, "summary")
 
+  # Release builds pass LARZOS_VERSION (from the git tag) to stamp every
+  # first-party larz-* package at once. Third-party packages and the
+  # `larzscript` wrapper (which tracks the upstream binary) keep their own.
+  let ov = env("LARZOS_VERSION", "")
+  if ov != "" and def["name"] != "larzscript" and def["name"].starts_with("larz") {
+    def["version"] = ov
+  }
+
   if not def.has("arch")       { def["arch"] = "all" }
   if not def.has("maintainer") { def["maintainer"] = "Larz Scripter <larz@larzos.com>" }
   if not def.has("depends")    { def["depends"] = [] }

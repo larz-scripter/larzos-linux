@@ -21,6 +21,7 @@ jobs:
       - name: Build packages (amd64 + arch:all + arm64 interpreter)
         run: |
           export LARZSCRIPT_PATH=lib
+          [ "$GITHUB_REF_TYPE" = tag ] && export LARZOS_VERSION="${GITHUB_REF_NAME#v}"
           make packages
           LARZOS_ARCH=arm64 larzscript bin/larz-pkg deb packages/larzscript
           ls -la dist/
