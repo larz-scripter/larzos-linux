@@ -15,11 +15,15 @@ Newest first. Mirrored to <https://larzos.com/larzos-linux/>.
   failed unit is `casper-md5check` (stale checksum on a stripped ISO -
   cosmetic).
 - Published ISO `sha256 55a2ae70...`; `larzos.com/larzos-linux/larzos-live-amd64.iso`.
-- `tools/termux-install.sh` - `larz-system` / `larz-pkg` / `larz-aid` on an
-  unrooted Android phone via Termux, native: larzscript ships as a static
-  `aarch64` ELF, so no proot / chroot. `plan`, `show`, `modules` and the AI
-  router work; `apply` stays disabled (root + apt + systemd).
-  One-liner: `curl -fsSL https://larzos.com/larzos-linux/termux.sh | sh`.
+- `tools/termux-install.sh` - LarzOS on an unrooted Android phone via Termux.
+  The static `aarch64` larzscript trips Android's seccomp filter (SIGSYS /
+  "Bad system call" - glibc reaches for `faccessat2`/`statx`), so the installer
+  drops LarzOS into a `proot-distro` Debian arm64 container: adds the apt repo,
+  installs `larzscript` + `larz-system` + `larz-ai` + `larzsh`, and puts thin
+  Termux launchers (`larz-system`, `larz-aid`, `larzos`) on `PATH` that bind
+  `~/.config/larzos` to the container's `/etc/larzos`. `plan`/`show`/`modules`
+  and the AI router work; `apply` converges packages + files but not systemd
+  services. One-liner: `curl -fsSL https://larzos.com/larzos-linux/termux.sh | sh`.
 
 ## 2026-09-09 — Phase 0 scaffold
 
