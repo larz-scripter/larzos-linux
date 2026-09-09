@@ -1,0 +1,3 @@
+#!/bin/sh
+# LarzOS - larz-pkg wrapper.
+exec env LARZSCRIPT_PATH=/usr/lib/larzos larzscript /usr/lib/larzos/larz-pkg.lz "$@"

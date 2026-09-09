@@ -19,3 +19,21 @@ Newest first. Mirrored to <https://larzos.com/larzos-linux/>.
   skeleton + systemd unit), `larzsh` (Larzscript login shell).
 - `larz-system plan examples/system.lz` produces a 13-change plan on a
   stock box; `examples/server.lz` a 10-change headless plan.
+
+## 2026-09-09 — Phase 1: apt repo + bootstrap
+
+- `larz-system`: `rollback` (re-apply previous spec, walks back through
+  snapshots), `status` (drift check), `history`. Applied specs rotate through
+  `/var/lib/larzos/history/` (keep 10).
+- `packages/larz-system/` — the engine packaged: CLIs + library tree under
+  `/usr/lib/larzos`, `/usr/bin` wrappers, default `/etc/larzos/system.lz`.
+  Verified: relative imports resolve from the installed layout, spec-eval
+  subprocess inherits the path.
+- `packages/larzscript/` — wraps the upstream release binary so
+  `apt install larz-desktop` pulls a working runtime (amd64; `LARZOS_ARCH=arm64`
+  for the arm64 deb).
+- `tools/repo-publish.sh` — builds a signed flat apt repo with
+  apt-ftparchive + gpg (ed25519 signing key, no reprepro). Publishes
+  `dists/stable`, `pool/main`, `KEY.asc`.
+- `tools/install.sh` — `curl -fsSL https://larzos.com/larzos-linux/install.sh | sudo sh`
+  adds the repo + key and installs a component.

@@ -1,0 +1,30 @@
+# larz-system - the config engine itself, packaged.
+#
+# Installs the CLIs and the Larzscript library tree under /usr/lib/larzos,
+# plus /usr/bin wrappers that point LARZSCRIPT_PATH at it so `larz-system`
+# and `larz-pkg` work from anywhere with no environment setup.
+
+import "larzos/pkg" as pkg
+
+pkg.package({
+  "name":       "larz-system",
+  "version":    "0.1.0",
+  "summary":    "Declarative Linux configuration in Larzscript (system.lz + larz-system)",
+  "arch":       "all",
+  "section":    "admin",
+  "depends":    ["larzscript"],
+  "build":      [],
+  "install": [
+    # library tree (engine + modules + vendored json/toml)
+    "mkdir -p $DESTDIR/usr/lib/larzos",
+    "cp -r ../../lib/larzos ../../lib/json ../../lib/toml $DESTDIR/usr/lib/larzos/",
+    # the real programs, minus the dev shebang line
+    "install -Dm755 ../../bin/larz-system $DESTDIR/usr/lib/larzos/larz-system.lz",
+    "install -Dm755 ../../bin/larz-pkg    $DESTDIR/usr/lib/larzos/larz-pkg.lz",
+    # wrappers
+    "install -Dm755 files/larz-system $DESTDIR/usr/bin/larz-system",
+    "install -Dm755 files/larz-pkg    $DESTDIR/usr/bin/larz-pkg",
+    # default spec + state dirs
+    "install -Dm644 files/system.lz $DESTDIR/etc/larzos/system.lz",
+  ],
+})

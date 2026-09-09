@@ -3,6 +3,9 @@
 #
 #   larz-system plan  [system.lz]   show what would change, touch nothing
 #   larz-system apply [system.lz]   make the changes (needs root)
+#   larz-system rollback            re-apply the previous spec (needs root)
+#   larz-system status              summary + drift of the applied spec
+#   larz-system history             list spec snapshots
 #   larz-system show                print the last-applied spec
 #   larz-system modules             list the realization modules
 #   larz-system version
@@ -85,9 +88,46 @@ fn spec_path(rest) {
   return len(rest) >= 1 ? rest[0] : DEFAULT_SPEC
 }
 
+let HISTORY = "/var/lib/larzos/history"
+let KEEP = 10
+
+# Record the spec we are about to apply. The previously-applied spec (if
+# any) is rotated into history first, so `rollback` can return to it.
+fn commit_state(spec) {
+  run("mkdir -p " + HISTORY)
+  if file_exists(STATE) {
+    let stamp = str(int(clock()))
+    run("cp " + STATE + " " + HISTORY + "/" + stamp + ".json")
+    # keep only the newest KEEP entries
+    let all = sorted(listdir(HISTORY))
+    let n = len(all)
+    if n > KEEP {
+      for i in range(n - KEEP) { run("rm -f " + HISTORY + "/" + all[i]) }
+    }
+  }
+  write_file(STATE, json.stringify(spec))
+}
+
+fn history_entries() {
+  if not file_exists(HISTORY) { return [] }
+  return sorted(listdir(HISTORY))
+}
+
+# Run a full plan/apply cycle for an already-evaluated spec.
+fn converge(spec, save) {
+  let groups = build_plan(spec)
+  let pending = print_plan(groups)
+  if pending == 0 { print("nothing to do"); return }
+  print("")
+  do_apply(groups)
+  if save { commit_state(spec) }
+  print("")
+  print("done - " + str(pending) + " change(s) applied")
+}
+
 # ---- dispatch ----
 if len(args) == 0 {
-  print("usage: larz-system plan|apply|show|modules|version [system.lz]")
+  print("usage: larz-system plan|apply|rollback|status|history|show|modules|version [system.lz]")
   exit(0)
 }
 let cmd = args[0]
@@ -108,23 +148,43 @@ if cmd == "version" {
   let spec = eval_spec(spec_path(rest))
   print("larz-system: plan for " + spec["hostname"])
   print_plan(build_plan(spec))
+} else if cmd == "status" {
+  if not file_exists(STATE) { die("no spec has been applied yet") }
+  let spec = json.parse(read_file(STATE))
+  let pending = 0
+  for g in build_plan(spec) {
+    for a in g["actions"] { if not a["skip"] { pending = pending + 1 } }
+  }
+  print("host:     " + spec["hostname"])
+  print("packages: " + str(len(spec["packages"])))
+  print("services: " + str(len(keys(spec["services"]))))
+  print("history:  " + str(len(history_entries())) + " snapshot(s)")
+  print("drift:    " + (pending == 0 ? "in sync" : str(pending) + " change(s) would be applied by re-running"))
+} else if cmd == "history" {
+  let es = history_entries()
+  if len(es) == 0 { print("(no history)"); exit(0) }
+  for e in es {
+    let ts = e.split(".")[0]
+    print("  " + ts + "  (" + capture("date -d @" + ts + " '+%Y-%m-%d %H:%M' 2>/dev/null").strip() + ")")
+  }
 } else if cmd == "apply" {
   if not is_root() { die("apply needs root (try: sudo larz-system apply)") }
-  let path = spec_path(rest)
-  let spec = eval_spec(path)
-  let groups = build_plan(spec)
+  let spec = eval_spec(spec_path(rest))
   print("larz-system: applying spec for " + spec["hostname"])
-  let pending = print_plan(groups)
-  if pending == 0 {
-    print("nothing to do")
-  } else {
-    print("")
-    do_apply(groups)
-    run("mkdir -p " + capture("dirname " + STATE).strip())
-    write_file(STATE, json.stringify(spec))
-    print("")
-    print("done - " + str(pending) + " change(s) applied")
-  }
+  converge(spec, true)
+} else if cmd == "rollback" {
+  if not is_root() { die("rollback needs root") }
+  let es = history_entries()
+  if len(es) == 0 { die("no history to roll back to") }
+  let prev = HISTORY + "/" + es[len(es) - 1]
+  let spec = json.parse(read_file(prev))
+  print("larz-system: rolling back to snapshot " + es[len(es) - 1].split(".")[0] +
+        " (host " + spec["hostname"] + ")")
+  # Re-apply the previous spec, then drop that snapshot so repeated rollbacks
+  # walk further back rather than toggling.
+  converge(spec, false)
+  write_file(STATE, json.stringify(spec))
+  run("rm -f " + prev)
 } else {
   die("unknown command: " + cmd)
 }

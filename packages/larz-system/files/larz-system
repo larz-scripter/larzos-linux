@@ -1,0 +1,3 @@
+#!/bin/sh
+# LarzOS - larz-system wrapper. Runs the engine with the library tree on the path.
+exec env LARZSCRIPT_PATH=/usr/lib/larzos larzscript /usr/lib/larzos/larz-system.lz "$@"

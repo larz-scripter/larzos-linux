@@ -1,0 +1,27 @@
+# larzscript - the interpreter, packaged from the upstream release binary so
+# `apt install larz-desktop` pulls a working language runtime with no
+# separate install step.
+#
+# Phase 1 targets amd64 (our Ubuntu 24.04 LTS base). Set LARZOS_ARCH=arm64
+# to build the arm64 package instead; other arches follow later.
+
+import "larzos/pkg" as pkg
+
+let arch = env("LARZOS_ARCH", "amd64")
+let asset = arch == "arm64" ? "larzscript-linux-aarch64" : "larzscript-linux-x86_64"
+
+pkg.package({
+  "name":       "larzscript",
+  "version":    "1.40.0",
+  "summary":    "The money-native Larzscript interpreter (upstream release binary)",
+  "arch":       arch,
+  "section":    "interpreters",
+  "depends":    [],
+  "build": [
+    "curl -fsSL https://github.com/larz-scripter/larzscript/releases/latest/download/" + asset + " -o larzscript.bin",
+    "test -s larzscript.bin",
+  ],
+  "install": [
+    "install -Dm755 larzscript.bin $DESTDIR/usr/bin/larzscript",
+  ],
+})
