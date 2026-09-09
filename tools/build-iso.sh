@@ -31,10 +31,16 @@ tar -C "$ROOT" -xzf "$ROOTFS"
 
 for m in proc sys dev dev/pts run; do mount --bind "/$m" "$ROOT/$m"; done
 
-chroot "$ROOT" /bin/sh -eux <<'CHROOT'
+KERNEL_PKG="${KERNEL_PKG:-linux-image-virtual}"
+
+chroot "$ROOT" /bin/sh -eux <<CHROOT
 export DEBIAN_FRONTEND=noninteractive
 apt-get update
-apt-get install -y --no-install-recommends linux-image-generic casper
+apt-get install -y --no-install-recommends $KERNEL_PKG casper
+CHROOT
+
+chroot "$ROOT" /bin/sh -eux <<'CHROOT'
+export DEBIAN_FRONTEND=noninteractive
 
 # casper's live overlay needs these in the initramfs or it drops to a
 # busybox shell ("cow format specified as 'overlay' and no support found").
@@ -54,8 +60,13 @@ ExecStart=
 ExecStart=-/sbin/agetty --autologin larz --keep-baud 115200,38400,9600 %I \$TERM
 E
 update-initramfs -c -k all
+
+# slim the live filesystem
+apt-get autoremove --purge -y
 apt-get clean
-rm -rf /var/lib/apt/lists/* /var/cache/apt/archives/*.deb
+rm -rf /var/lib/apt/lists/* /var/cache/apt/archives/*.deb \
+       /usr/share/doc/* /usr/share/man/* /usr/share/info/* \
+       /usr/share/lintian/* /usr/share/locale/* /var/log/* /var/cache/*
 CHROOT
 
 cleanup
@@ -67,9 +78,10 @@ cp "$ROOT"/boot/initrd.img-* "$ISO/casper/initrd"
 
 # the live filesystem
 mksquashfs "$ROOT" "$ISO/casper/filesystem.squashfs" \
-  -noappend -comp zstd -wildcards \
+  -noappend -comp xz -Xbcj x86 -b 1M -wildcards \
   -e "proc/*" "sys/*" "dev/*" "run/*" "tmp/*" "boot/*" \
-     "var/cache/apt/archives/*" "var/lib/apt/lists/*"
+     "var/cache/*" "var/lib/apt/lists/*" \
+     "usr/share/doc/*" "usr/share/man/*" "usr/share/locale/*"
 du -sx --block-size=1 "$ROOT" | cut -f1 > "$ISO/casper/filesystem.size"
 printf 'LarzOS live amd64\n' > "$ISO/.disk/info"
 
