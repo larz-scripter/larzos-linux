@@ -1,23 +1,30 @@
 #!/bin/sh
-# build-rootfs.sh - a minimal LarzOS root filesystem: Ubuntu 24.04 base +
-# the LarzOS apt repo + the config engine, preconfigured. This is the shared
-# base for the WSL image (below), and later the Docker image and live ISO.
+# build-rootfs.sh - a minimal LarzOS root filesystem: Debian stable base +
+# the LarzOS apt repo + the config engine + the LarzOS identity, all
+# preconfigured. Shared base for the WSL image, the Docker image and the
+# live ISO.
 #
-# Run on an Ubuntu host as root.
+# Debian is the executor; nothing the user sees says "Debian" - larz-branding
+# rewrites os-release / issue / motd / grub / dpkg-vendor, and
+# tools/check-branding.sh fails the build if anything leaks through.
 #
-#   OUT=dist/larzos-rootfs.tar.gz sh tools/build-rootfs.sh
+# Run on a Debian/Ubuntu host as root.
+#
+#   OUT=dist/larzos-rootfs-amd64.tar.gz sh tools/build-rootfs.sh
 #
 # Then, on Windows:
-#   wsl --import LarzOS C:\LarzOS larzos-rootfs.tar.gz
+#   wsl --import LarzOS C:\LarzOS larzos-rootfs-amd64.tar.gz
 #   wsl -d LarzOS
 set -eu
 
-SUITE="${SUITE:-noble}"
+SUITE="${SUITE:-trixie}"
 ARCH="${ARCH:-amd64}"
 OUT="${OUT:-dist/larzos-rootfs-$ARCH.tar.gz}"
 ROOT="${ROOT:-/tmp/larzos-rootfs}"
 APT_BASE="${LARZOS_APT_BASE:-https://larzos.com/apt}"
-MIRROR="${MIRROR:-http://archive.ubuntu.com/ubuntu}"
+MIRROR="${MIRROR:-http://deb.debian.org/debian}"
+SECMIRROR="${SECMIRROR:-http://deb.debian.org/debian-security}"
+HERE="$(cd "$(dirname "$0")/.." && pwd)"
 
 command -v debootstrap >/dev/null || { apt-get update && apt-get install -y debootstrap; }
 
@@ -32,9 +39,9 @@ debootstrap --arch="$ARCH" --variant=minbase \
   "$SUITE" "$ROOT" "$MIRROR"
 
 cat > "$ROOT/etc/apt/sources.list" <<EOF
-deb $MIRROR $SUITE main universe
-deb $MIRROR $SUITE-updates main universe
-deb http://security.ubuntu.com/ubuntu $SUITE-security main universe
+deb $MIRROR $SUITE main contrib non-free-firmware
+deb $MIRROR $SUITE-updates main contrib non-free-firmware
+deb $SECMIRROR $SUITE-security main contrib non-free-firmware
 EOF
 
 curl -fsSL "$APT_BASE/KEY.asc" | gpg --dearmor > "$ROOT/usr/share/keyrings/larzos-archive-keyring.gpg"
@@ -57,11 +64,12 @@ for m in proc sys dev dev/pts; do mount --bind "/$m" "$ROOT/$m"; done
 chroot "$ROOT" /bin/sh -eux <<'CHROOT'
 export DEBIAN_FRONTEND=noninteractive
 apt-get update
-apt-get install -y --no-install-recommends larz-system larz-ai larzsh
+# larz-branding's postinst runs `larz-rebrand apply`, so the image presents as
+# LarzOS the moment the package lands.
+apt-get install -y --no-install-recommends larz-branding larz larz-system larz-ai larzsh
 useradd -m -s /usr/bin/larzsh -G sudo larz
 echo 'larz ALL=(ALL) NOPASSWD:ALL' > /etc/sudoers.d/larz
 chmod 440 /etc/sudoers.d/larz
-printf 'Welcome to LarzOS.\nYour machine is /etc/larzos/system.lz  -  edit it, then: sudo larz-system apply\n' > /etc/motd
 apt-get clean
 rm -rf /var/lib/apt/lists/* /tmp/*
 CHROOT
@@ -78,12 +86,15 @@ import "larzos" as larzos
 larzos.system({
   "hostname": "larzos",
   "users":    [ { "name": "larz", "groups": ["sudo"], "shell": "/usr/bin/larzsh" } ],
-  "packages": ["larz-system", "larz-ai", "larzsh", "git", "curl"],
+  "packages": ["larz-branding", "larz", "larz-system", "larz-ai", "larzsh", "git", "curl"],
   "services": { "larz-ai": "enabled" },
   "audio":    { "profile": "off" },
   "ai":       { "local_models": [], "gateway": "https://gateway.larzpay.com" },
 })
 EOF
+
+# Identity gate: the image must not present as the base distro.
+sh "$HERE/tools/check-branding.sh" "$ROOT"
 
 mkdir -p "$(dirname "$OUT")"
 tar --numeric-owner -C "$ROOT" -czf "$OUT" .
