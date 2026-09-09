@@ -26,18 +26,30 @@ jobs:
           LARZOS_ARCH=arm64 larzscript bin/larz-pkg deb packages/larzscript
           ls -la dist/
 
-      - name: Publish to the apt repo
+      - name: Publish .debs to the apt repo
         env:
           KEY: ${{ secrets.LARZOS_DEPLOY_KEY }}
           HOST: ${{ secrets.LARZOS_DEPLOY_HOST }}
         run: |
           printf '%s\n' "$KEY" > key && chmod 600 key
-          tar -c -C dist . | ssh -i key -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null "root@$HOST"
+          tar -c -C dist $(cd dist && ls *.deb) | ssh -i key -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null "root@$HOST"
           rm -f key
 
-      - name: Attach .deb files to the GitHub release
+      - name: Build the rootfs image (shared base for WSL / Docker / ISO)
+        if: startsWith(github.ref, 'refs/tags/')
+        run: |
+          V="${GITHUB_REF_NAME#v}"
+          sudo OUT="dist/larzos-rootfs-amd64-$V.tar.gz" LARZOS_APT_BASE=https://larzos.com/apt \
+            sh tools/build-rootfs.sh
+          sudo chown "$USER" dist/*.tar.gz
+          (cd dist && sha256sum larzos-rootfs-*.tar.gz > larzos-rootfs-amd64-$V.tar.gz.sha256)
+
+      - name: Attach artifacts to the GitHub release
         if: startsWith(github.ref, 'refs/tags/')
         uses: softprops/action-gh-release@v2
         with:
-          files: dist/*.deb
+          files: |
+            dist/*.deb
+            dist/*.tar.gz
+            dist/*.sha256
           generate_release_notes: true

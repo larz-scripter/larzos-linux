@@ -85,3 +85,13 @@ Newest first. Mirrored to <https://larzos.com/larzos-linux/>.
   redirection / `&&` already worked (unknown commands run via `/bin/sh`).
 - systemd module: a `spec.units` key with a `/` is a drop-in path
   (`ssh.service.d/larzos.conf`) - override a distro unit without replacing it.
+
+## 2026-09-09 — WSL rootfs published
+
+- larzos.com/larzos-linux/larzos-rootfs-amd64.tar.gz (57 MB) is live -
+  `wsl --import` it. Verified by importing into Docker on the build host and
+  running `larz-system plan` clean.
+- Packages declare dpkg conffiles (`/etc/larzos/system.lz`, `ai.toml`);
+  `larz-system` ships a minimal commented default spec.
+- repo-publish.sh prunes the pool to the newest version per package/arch.
+- release.yml now also builds + attaches the rootfs tarball on a tag.
