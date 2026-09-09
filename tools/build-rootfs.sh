@@ -52,22 +52,6 @@ generateHosts=true
 generateResolvConf=true
 EOF
 
-# the machine spec the image ships with
-mkdir -p "$ROOT/etc/larzos"
-cat > "$ROOT/etc/larzos/system.lz" <<'EOF'
-# The machine this image becomes. Edit, then: sudo larz-system apply
-import "larzos" as larzos
-
-larzos.system({
-  "hostname": "larzos",
-  "users":    [ { "name": "larz", "groups": ["sudo"], "shell": "/usr/bin/larzsh" } ],
-  "packages": ["larz-system", "larz-ai", "larzsh", "git", "curl"],
-  "services": { "larz-ai": "enabled" },
-  "audio":    { "profile": "off" },
-  "ai":       { "local_models": [], "gateway": "https://gateway.larzpay.com" },
-})
-EOF
-
 for m in proc sys dev dev/pts; do mount --bind "/$m" "$ROOT/$m"; done
 
 chroot "$ROOT" /bin/sh -eux <<'CHROOT'
@@ -84,6 +68,22 @@ CHROOT
 
 cleanup
 trap - EXIT
+
+# The machine this image ships as - written after the package install so it
+# is not clobbered by larz-system's packaged default conffile.
+cat > "$ROOT/etc/larzos/system.lz" <<'EOF'
+# The machine this image becomes. Edit, then: sudo larz-system apply
+import "larzos" as larzos
+
+larzos.system({
+  "hostname": "larzos",
+  "users":    [ { "name": "larz", "groups": ["sudo"], "shell": "/usr/bin/larzsh" } ],
+  "packages": ["larz-system", "larz-ai", "larzsh", "git", "curl"],
+  "services": { "larz-ai": "enabled" },
+  "audio":    { "profile": "off" },
+  "ai":       { "local_models": [], "gateway": "https://gateway.larzpay.com" },
+})
+EOF
 
 mkdir -p "$(dirname "$OUT")"
 tar --numeric-owner -C "$ROOT" -czf "$OUT" .

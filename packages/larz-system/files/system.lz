@@ -1,46 +1,30 @@
-# system.lz - a LarzOS machine, described in Larzscript.
+# /etc/larzos/system.lz - this machine, described in Larzscript.
 #
-#   larz-system plan   examples/system.lz     # see what would change
-#   sudo larz-system apply examples/system.lz  # converge the machine
+#   larz-system plan          preview the changes
+#   sudo larz-system apply    converge the machine
 #
-# This file is ordinary Larzscript: it may compute values, branch on the
-# host, or import helpers. It just has to hand one table to larzos.system.
+# This default is intentionally conservative. Uncomment and edit as needed;
+# see https://larzos.com/larzos-linux/ and `larz-system modules`.
 
 import "larzos" as larzos
 
 larzos.system({
-  "hostname": "larzbox",
-  "timezone": "UTC",
-  "locale":   "en_US.UTF-8",
+  "hostname": "larzos",
 
-  "users": [
-    { "name":   "larz",
-      "groups": ["sudo", "audio", "video"],
-      "shell":  "/usr/bin/larzsh" },
-  ],
+  # "users": [
+  #   { "name": "larz", "groups": ["sudo"], "shell": "/usr/bin/larzsh" },
+  # ],
 
-  # Resolved against the LarzOS apt repo first, then the base distro.
-  "packages": [
-    "larz-desktop",   # metapackage: shell + audio + AI manager
-    "larz-ai",
-    "larzsh",
-    "git", "curl", "vim", "firefox",
-  ],
+  "packages": ["larz-system", "larz-ai"],
 
   "services": {
-    "ssh":      "enabled",
-    "pipewire": "enabled",
-    "larz-ai":  "enabled",
+    "larz-ai": "enabled",
   },
 
-  "audio": {
-    "profile": "pro",     # pro | desktop | off
-    "rate":    48000,
-    "quantum": 128,       # ~2.7 ms round-trip at 48 kHz
-  },
+  # "audio": { "profile": "pro", "quantum": 128, "rate": 48000 },
 
   "ai": {
-    "local_models": ["qwen2.5-coder:7b"],
-    "gateway":      "https://gateway.larzpay.com",
+    "local_models": [],
+    "gateway": "https://gateway.larzpay.com",
   },
 })

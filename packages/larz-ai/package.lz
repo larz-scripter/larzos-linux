@@ -14,6 +14,7 @@ pkg.package({
   "arch":       "all",
   "section":    "misc",
   "depends":    ["larzscript", "larz-system", "curl"],
+  "conffiles":  ["/etc/larzos/ai.toml"],
   "build":      [],
   "install": [
     "install -Dm755 files/larz-aid.lz  $DESTDIR/usr/lib/larzos/larz-aid.lz",

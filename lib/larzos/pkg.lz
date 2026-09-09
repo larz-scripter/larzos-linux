@@ -38,6 +38,7 @@ fn package(def) {
   if not def.has("section")    { def["section"] = "misc" }
   if not def.has("build")      { def["build"] = [] }
   if not def.has("install")    { def["install"] = [] }
+  if not def.has("conffiles")  { def["conffiles"] = [] }
 
   let dest = env("LARZOS_PKG_OUT", "")
   if dest == "" {

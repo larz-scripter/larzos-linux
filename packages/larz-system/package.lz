@@ -13,6 +13,7 @@ pkg.package({
   "arch":       "all",
   "section":    "admin",
   "depends":    ["larzscript"],
+  "conffiles":  ["/etc/larzos/system.lz"],
   "build":      [],
   "install": [
     # the shared LarzOS Larzscript library root - engine, modules, and the

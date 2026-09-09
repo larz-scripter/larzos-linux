@@ -44,6 +44,9 @@ if cmd == "list" {
   run("rm -rf " + stage)
   run("mkdir -p " + stage + "/DEBIAN")
   write_file(stage + "/DEBIAN/control", pkg.control(d))
+  if d.has("conffiles") and len(d["conffiles"]) > 0 {
+    write_file(stage + "/DEBIAN/conffiles", join(d["conffiles"], "\n") + "\n")
+  }
 
   for line in d["build"] {
     print("build: " + line)
