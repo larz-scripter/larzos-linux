@@ -106,3 +106,15 @@ Newest first. Mirrored to <https://larzos.com/larzos-linux/>.
   installer, in Larzscript: GPT (EFI + ext4 root), rsync the live system,
   fstab by UUID, GRUB for UEFI or BIOS, keeps `/etc/larzos/system.lz`.
   No Calamares - the installer is Larzscript, like everything else.
+
+## 2026-09-09 — live ISO: builds, boot-test in progress
+
+- `tools/build-iso.sh` produces a hybrid BIOS/UEFI ISO (928 MB): casper
+  live layer over the rootfs, autologin to larzsh, `grub-mkrescue`.
+- Headless QEMU (TCG, no KVM) boot: GRUB OK, kernel OK, then casper panics
+  `modprobe -b overlay || panic "cow format ... no support found"` and drops
+  to the initramfs shell - despite overlay.ko.zst + modules.dep.bin +
+  kmod + libzstd all present in the initrd. Added overlay/squashfs/isofs to
+  the initramfs and MODULES=most; still fails under TCG. Needs a real
+  VirtualBox / bare-metal boot (PC2/VBox was offline this session).
+- `larz-install` is done regardless - it runs from any live environment.
