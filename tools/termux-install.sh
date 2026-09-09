@@ -3,125 +3,111 @@
 #
 #   curl -fsSL https://larzos.com/larzos-linux/termux.sh | sh
 #
-# Installs the LarzOS control plane (larz-system / larz-pkg / larz-aid) on an
-# unrooted Android phone via Termux. Larzscript is a fully static aarch64 ELF,
-# so it runs natively on Android - no proot, no chroot.
+# Android's seccomp filter kills foreign static binaries (SIGSYS / "Bad system
+# call") the moment glibc reaches for a newer syscall, so LarzOS runs inside a
+# small Debian arm64 container via proot-distro. You still just type
+# `larz-system plan` in Termux - thin launchers hand off to the container.
 #
-# What works here:  larz-system plan/show/modules/version, larz-pkg, larz-aid
-#                   (route/models/serve/health) - the whole config + package +
-#                   AI-router engine, exactly as on a real LarzOS box.
-# What does NOT:     larz-system apply  (needs root + apt + systemd).
-#                    Use a VM / the live ISO / the WSL rootfs for a full apply.
+# Works:  larz-system plan/show/modules/status, larz-aid (route/models/serve),
+#         a full larzsh shell, apt against the real LarzOS repo.
+# Limited: larz-system apply converges packages + files but not systemd
+#          services (no init in the container). Use the live ISO / a VM / WSL
+#          for a full apply.
 set -eu
 
 PREFIX="${PREFIX:-/data/data/com.termux/files/usr}"
-REPO_DIR="${LARZOS_DIR:-$HOME/larzos-linux}"
-BRANCH="${LARZOS_BRANCH:-main}"
-LZS_URL="https://larzos.com/apt/pool/main/larzscript_1.40.0_arm64.deb"
-GIT_URL="https://github.com/larz-scripter/larzos-linux"
+DISTRO="${LARZOS_DISTRO:-debian}"
+APT_BASE="https://larzos.com/apt"
+CONF_DIR="$HOME/.config/larzos"
 
-say() { printf '\033[1;36m::\033[0m %s\n' "$*"; }
-die() { printf '\033[1;31mxx\033[0m %s\n' "$*" >&2; exit 1; }
+say()  { printf '\033[1;36m::\033[0m %s\n' "$*"; }
+warn() { printf '\033[1;33m!!\033[0m %s\n' "$*"; }
+die()  { printf '\033[1;31mxx\033[0m %s\n' "$*" >&2; exit 1; }
 
+[ -n "${PREFIX:-}" ] && [ -d "$PREFIX/bin" ] || die "run this inside Termux"
 case "$(uname -m)" in
   aarch64|arm64) ;;
-  *) die "this build is aarch64-only (found $(uname -m))" ;;
+  *) die "aarch64 only (found $(uname -m))" ;;
 esac
 
-# 1. deps
-if command -v pkg >/dev/null 2>&1; then
-  say "installing git, curl, tar, xz, dpkg"
-  pkg install -y git curl tar xz-utils dpkg >/dev/null 2>&1 || \
-    pkg install -y git curl tar xz-utils dpkg
+# 1. proot-distro + a Debian arm64 rootfs
+say "installing proot-distro"
+pkg install -y proot-distro >/dev/null 2>&1 || pkg install -y proot-distro
+
+if proot-distro list --installed 2>/dev/null | grep -qw "$DISTRO"; then
+  say "$DISTRO container already installed"
 else
-  command -v git curl >/dev/null 2>&1 || die "need git and curl on PATH"
+  say "installing the $DISTRO arm64 container (~150 MB download, one time)"
+  proot-distro install "$DISTRO"
 fi
 
-# 2. static larzscript
-if ! command -v larzscript >/dev/null 2>&1; then
-  say "fetching static larzscript (aarch64) -> \$PREFIX/bin"
-  tmp="$(mktemp -d)"
-  curl -fsSL "$LZS_URL" -o "$tmp/l.deb"
-  mkdir "$tmp/x"
-  if command -v dpkg-deb >/dev/null 2>&1; then
-    dpkg-deb -x "$tmp/l.deb" "$tmp/x"
-  elif command -v ar >/dev/null 2>&1; then
-    ( cd "$tmp" && ar x l.deb && tar -C x -xf data.tar.* )
-  else
-    die "need dpkg or binutils to unpack the larzscript package (pkg install dpkg)"
-  fi
-  install -m 0755 "$(find "$tmp/x" -name larzscript -type f | head -1)" "$PREFIX/bin/larzscript"
-  rm -rf "$tmp"
-fi
-say "larzscript $(larzscript --version 2>&1 | sed 's/.*native) //')"
+pd() { proot-distro login "$DISTRO" --shared-tmp -- "$@"; }
 
-# 3. repo
-if [ -d "$REPO_DIR/.git" ]; then
-  say "updating $REPO_DIR"
-  git -C "$REPO_DIR" pull --ff-only --quiet || true
-else
-  say "cloning $GIT_URL -> $REPO_DIR"
-  git clone --depth 1 --branch "$BRANCH" "$GIT_URL" "$REPO_DIR"
-fi
+# 2. LarzOS apt repo + packages inside the container
+say "adding the LarzOS apt repo and installing the stack (inside $DISTRO)"
+pd sh -eu -c '
+  export DEBIAN_FRONTEND=noninteractive
+  apt-get update -qq
+  apt-get install -y -qq curl gnupg ca-certificates >/dev/null
+  curl -fsSL '"$APT_BASE"'/KEY.asc | gpg --dearmor -o /usr/share/keyrings/larzos-archive-keyring.gpg
+  echo "deb [signed-by=/usr/share/keyrings/larzos-archive-keyring.gpg] '"$APT_BASE"' stable main" \
+    > /etc/apt/sources.list.d/larzos.list
+  apt-get update -qq
+  apt-get install -y -qq larzscript larz-system larz-ai larzsh
+  larz-system version
+'
 
-# 4. config seeds (user-writable, no /etc on Android)
-CONF_DIR="$HOME/.config/larzos"
+# 3. share the spec dir: Termux ~/.config/larzos  <->  container /etc/larzos
+#    (the bind masks the package's /etc/larzos, so seed both files out first)
 mkdir -p "$CONF_DIR"
+[ -f "$CONF_DIR/ai.toml" ] || pd sh -c 'cat /etc/larzos/ai.toml 2>/dev/null' > "$CONF_DIR/ai.toml" || true
+[ -s "$CONF_DIR/ai.toml" ] || printf 'gateway = "https://gateway.larzpay.com"\n[local]\nmodels = []\n' > "$CONF_DIR/ai.toml"
 if [ ! -f "$CONF_DIR/system.lz" ]; then
-  cp "$REPO_DIR/examples/system.lz" "$CONF_DIR/system.lz"
-  say "seeded $CONF_DIR/system.lz  (edit it, then: larz-system plan)"
-fi
-if [ ! -f "$CONF_DIR/ai.toml" ]; then
-  cat > "$CONF_DIR/ai.toml" <<'EOF'
-gateway = "https://gateway.larzpay.com"
-[local]
-models = []
+  pd sh -c 'cat /etc/larzos/system.lz 2>/dev/null' > "$CONF_DIR/system.lz" || true
+  [ -s "$CONF_DIR/system.lz" ] || cat > "$CONF_DIR/system.lz" <<'EOF'
+# Your machine, in Larzscript.  Edit, then:  larz-system plan
+import "larzos" as larzos
+
+larzos.system({
+  "hostname": "larzbox",
+  "timezone": "UTC",
+  "locale":   "en_US.UTF-8",
+  "packages": ["git", "curl"],
+  "ai": { "gateway": "https://gateway.larzpay.com" },
+})
 EOF
+  say "seeded $CONF_DIR/system.lz"
 fi
 
-# 5. wrappers
-mk_wrap() {
-  bin="$1"; target="$2"
-  cat > "$PREFIX/bin/$bin" <<EOF
+# 4. Termux launchers -> container
+mk() {
+  cat > "$PREFIX/bin/$1" <<EOF
 #!/data/data/com.termux/files/usr/bin/sh
-export LARZSCRIPT_PATH="$REPO_DIR/lib"
-export LARZOS_AI_CONF="\${LARZOS_AI_CONF:-$CONF_DIR/ai.toml}"
-cd "$REPO_DIR"
-exec larzscript "$REPO_DIR/$target" "\$@"
+exec proot-distro login "$DISTRO" --shared-tmp --bind "$CONF_DIR:/etc/larzos" -- $2 "\$@"
 EOF
-  chmod 0755 "$PREFIX/bin/$bin"
+  chmod 0755 "$PREFIX/bin/$1"
 }
-say "installing wrappers: larz-system larz-pkg larz-aid"
-mk_wrap larz-pkg    bin/larz-pkg
-mk_wrap larz-aid    packages/larz-ai/files/larz-aid.lz
-
-# larz-system: default the spec path to the user config when the sub-command
-# takes one (plan/show/apply) and the caller didn't give one.
-cat > "$PREFIX/bin/larz-system" <<EOF
+say "installing launchers: larz-system larz-aid larzos"
+mk larz-system larz-system
+mk larz-aid    larz-aid
+cat > "$PREFIX/bin/larzos" <<EOF
 #!/data/data/com.termux/files/usr/bin/sh
-export LARZSCRIPT_PATH="$REPO_DIR/lib"
-export LARZOS_AI_CONF="\${LARZOS_AI_CONF:-$CONF_DIR/ai.toml}"
-SPEC="$CONF_DIR/system.lz"
-case "\${1:-}" in
-  plan|show|apply) [ -n "\${2:-}" ] || set -- "\$1" "\$SPEC" ;;
-esac
-exec larzscript "$REPO_DIR/bin/larz-system" "\$@"
+# drop into the LarzOS container shell
+exec proot-distro login "$DISTRO" --shared-tmp --bind "$CONF_DIR:/etc/larzos" -- "\${@:-larzsh}"
 EOF
-chmod 0755 "$PREFIX/bin/larz-system"
+chmod 0755 "$PREFIX/bin/larzos"
 
+printf '\n\033[1;32mLarzOS (Termux edition) ready.\033[0m\n'
 cat <<EOF
 
-  \033[1;32mLarzOS (Termux edition) ready.\033[0m
+  larz-system modules
+  larz-system plan            # reads ~/.config/larzos/system.lz
+  larz-system show
+  larz-aid  route --task coding
+  larz-aid  serve &           # AI router on 127.0.0.1:8199 (inside the container)
+  larzos                      # a full LarzOS (larzsh) shell
 
-    larz-system modules            list realization modules
-    larz-system plan  ~/.config/larzos/system.lz
-    larz-system show  ~/.config/larzos/system.lz
-    larz-pkg  list
-    larz-aid  route --task coding
-    larz-aid  serve &              # local AI router on 127.0.0.1:8199
-    curl 127.0.0.1:8199/health
-
-  Edit ~/.config/larzos/system.lz to describe your machine in Larzscript.
-  'larz-system apply' is intentionally disabled here (needs root+apt+systemd) -
-  test a full apply on the live ISO, a VM, or the WSL rootfs.
+  Edit ~/.config/larzos/system.lz on the phone - it is /etc/larzos/system.lz
+  in the container. 'larz-system apply' converges packages and files but not
+  systemd services (no init here); use the live ISO / a VM / WSL for that.
 EOF
