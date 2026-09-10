@@ -50,6 +50,7 @@ fn usage() {
   print("  " + C + "ai" + R)
   print("    larz ai <text>                       larz do \"<goal>\"   larz explain [file]")
   print("    larz why <topic>                     larz ask <question>")
+  print("    larz code [args]                     Claude Code, the terminal coding agent")
   print("  " + C + "fleet" + R)
   print("    larz fleet [add|rm <name> <target>]  larz fleet apply|run <...>")
   print("    larz share                           larz adopt <id|url>")
@@ -309,6 +310,14 @@ else if cmd == "do" {
   let tmp = "/tmp/larz-do.sh"
   write_file(tmp, script)
   exit(sh(sudo() + "sh " + tmp))
+}
+else if cmd == "code" {
+  # Claude Code - Anthropic's terminal coding agent, preinstalled on LarzOS.
+  if sh("command -v larz-code >/dev/null 2>&1") != 0 {
+    print("larz code needs Claude Code:  " + C + "larz install larz-claude-code" + R)
+    exit(1)
+  }
+  exit(sh("larz-code " + qjoin(rest)))
 }
 
 # ---- fleet ----

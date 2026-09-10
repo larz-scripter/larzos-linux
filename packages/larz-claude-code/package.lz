@@ -1,0 +1,29 @@
+# larz-claude-code - Claude Code, Anthropic's terminal coding agent, as a
+# first-class part of LarzOS.
+#
+# Ships a `claude` command (installed globally via npm on configure) plus
+# `larz-code`, a thin wrapper that handles first-run auth hints and can route
+# Claude Code through the LarzOS Gateway when /etc/larzos/claude-code.toml
+# names one. `larz code` fronts the same wrapper.
+#
+# Auth is the user's: the first run signs in with an Anthropic account, or an
+# API key in ANTHROPIC_API_KEY. LarzOS does not proxy a key it doesn't have.
+
+import "larzos/pkg" as pkg
+
+pkg.package({
+  "name":      "larz-claude-code",
+  "version":   "0.1.0",
+  "summary":   "Claude Code (Anthropic's terminal coding agent) preinstalled on LarzOS",
+  "arch":      "all",
+  "section":   "devel",
+  "depends":   ["nodejs", "npm", "ca-certificates", "git"],
+  "conffiles": ["/etc/larzos/claude-code.toml"],
+  "scripts":   {"postinst": "files/postinst", "prerm": "files/prerm"},
+  "build":     [],
+  "install": [
+    "install -Dm755 files/larz-code        $DESTDIR/usr/bin/larz-code",
+    "install -Dm644 files/claude-code.toml $DESTDIR/etc/larzos/claude-code.toml",
+    "install -Dm644 files/larz-code.1      $DESTDIR/usr/share/man/man1/larz-code.1",
+  ],
+})

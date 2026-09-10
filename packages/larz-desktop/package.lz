@@ -17,6 +17,7 @@ pkg.package({
     "larzsh",
     "larz-ai",
     "larz-system",
+    "larz-claude-code",
     "pipewire", "pipewire-jack", "wireplumber",
     "rtkit",
   ],

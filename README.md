@@ -85,7 +85,8 @@ bin/larz-pkg           build .deb packages from packages/<name>/package.lz
 lib/larzos/            the config engine + realization modules
 lib/larzos/modules/    hostname, locale, users, packages, services, audio, ai
 examples/              reference machine specs (desktop, server)
-packages/              the distro's own packages (larz-desktop, larz-ai, larzsh)
+packages/              the distro's own packages (larz-desktop, larz-ai, larzsh,
+                       larz-claude-code — `larz code`, Claude Code preinstalled)
 docs/                  design notes and the system.lz schema
 ```
 

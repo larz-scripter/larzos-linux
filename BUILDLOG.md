@@ -2,6 +2,24 @@
 
 Newest first. Mirrored to <https://larzos.com/larzos-linux/>.
 
+## 2026-09-10 - Claude Code, preinstalled
+
+- **`larz code`.** New package `larz-claude-code` puts Anthropic's terminal
+  coding agent on the OS. `larz code` (or `larz-code`, or `claude`) starts it
+  in the current directory. It ships in the rootfs (so the WSL image, the live
+  ISO and the phone all have it) and is pulled by `larz-desktop`.
+- The `claude` command itself is installed via npm on configure
+  (`larz-claude-code` depends on `nodejs` + `npm`); `larz-code` retries the
+  install if it's missing.
+- **Auth is the user's.** First run signs in with an Anthropic account, or
+  `ANTHROPIC_API_KEY`. `/etc/larzos/claude-code.toml` can name a `base_url` +
+  `auth_token` to route Claude Code through the LarzOS Gateway once the
+  Gateway exposes an Anthropic-compatible endpoint.
+- The minimal container image (`ghcr.io/larz-scripter/larzos`) stays lean —
+  `larz install larz-claude-code` adds it there.
+- Termux edition: `larz-code` launcher + `larz code` documented; set
+  `LARZOS_NO_CLAUDE=1` to skip the bigger nodejs download.
+
 ## 2026-09-09 - the larz command grows up (v0.1.6)
 
 - **Money is in the OS.** `lib/larzos/wallet.lz` - the machine has a wallet;

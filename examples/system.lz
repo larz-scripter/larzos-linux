@@ -21,9 +21,8 @@ larzos.system({
 
   # Resolved against the LarzOS apt repo first, then the base distro.
   "packages": [
-    "larz-desktop",   # metapackage: shell + audio + AI manager
-    "larz-ai",
-    "larzsh",
+    "larz-desktop",       # metapackage: shell + audio + AI manager + Claude Code
+    "larz-claude-code",   # `larz code` - Anthropic's terminal coding agent
     "git", "curl", "vim", "firefox",
   ],
 

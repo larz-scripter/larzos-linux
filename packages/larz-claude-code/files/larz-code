@@ -1,0 +1,58 @@
+#!/bin/sh
+# larz-code - Claude Code on LarzOS.
+#
+#   larz-code            start Claude Code in the current directory
+#   larz code  ...       same, via the larz umbrella command
+#   claude     ...        the tool itself, once installed
+#
+# Reads /etc/larzos/claude-code.toml. If it names a base_url + auth_token,
+# Claude Code is pointed there (ANTHROPIC_BASE_URL / ANTHROPIC_AUTH_TOKEN) -
+# use this to route through the LarzOS Gateway once it exposes an
+# Anthropic-compatible endpoint. Otherwise Claude Code talks to Anthropic
+# directly and you sign in on first run.
+set -eu
+
+CONF="${LARZOS_CLAUDE_CONF:-/etc/larzos/claude-code.toml}"
+
+_tomlval() {
+  # crude but dependency-free: last non-empty "key = "value"" wins
+  [ -f "$CONF" ] || return 0
+  sed -n 's/^[[:space:]]*'"$1"'[[:space:]]*=[[:space:]]*"\(.*\)"[[:space:]]*$/\1/p' "$CONF" | tail -n1
+}
+
+ensure_claude() {
+  command -v claude >/dev/null 2>&1 && return 0
+  if command -v npm >/dev/null 2>&1; then
+    echo "larz-code: Claude Code isn't installed yet - fetching it..." >&2
+    if [ "$(id -u)" = 0 ]; then
+      npm install -g --no-fund --no-audit @anthropic-ai/claude-code >&2 || true
+    else
+      sudo npm install -g --no-fund --no-audit @anthropic-ai/claude-code >&2 || true
+    fi
+  fi
+  command -v claude >/dev/null 2>&1 && return 0
+  cat >&2 <<'EOF'
+larz-code: Claude Code is not available.
+  Install it:   sudo npm install -g @anthropic-ai/claude-code
+  Needs:        Node.js 18+  (LarzOS ships nodejs + npm)
+Then:  larz code
+EOF
+  return 1
+}
+
+ensure_claude
+
+BASE_URL="$(_tomlval base_url || true)"
+AUTH_TOKEN="$(_tomlval auth_token || true)"
+if [ -n "${BASE_URL:-}" ] && [ -n "${AUTH_TOKEN:-}" ]; then
+  export ANTHROPIC_BASE_URL="$BASE_URL"
+  export ANTHROPIC_AUTH_TOKEN="$AUTH_TOKEN"
+fi
+
+if [ -z "${ANTHROPIC_API_KEY:-}" ] && [ -z "${ANTHROPIC_AUTH_TOKEN:-}" ] \
+   && [ ! -e "$HOME/.claude.json" ] && [ ! -d "$HOME/.claude" ]; then
+  echo "larz-code: first run - Claude Code will ask you to sign in with your Anthropic account." >&2
+  echo "           (or set ANTHROPIC_API_KEY in ~/.larzsh/env to skip this)" >&2
+fi
+
+exec claude "$@"

@@ -1,0 +1,10 @@
+#!/bin/sh
+set -e
+case "$1" in
+  remove|purge)
+    if command -v npm >/dev/null 2>&1; then
+      npm uninstall -g @anthropic-ai/claude-code >/dev/null 2>&1 || true
+    fi
+    ;;
+esac
+exit 0

@@ -6,7 +6,7 @@ _larz() {
     prev="${COMP_WORDS[COMP_CWORD-1]}"
     verbs="install remove search update upgrade list plan apply rollback status \
            snapshot generations switch diff wallet pay topup budget spend \
-           ai do explain why ask fleet share adopt doctor rebrand version apt help"
+           ai do explain why ask code fleet share adopt doctor rebrand version apt help"
     if [ "$COMP_CWORD" -eq 1 ]; then
         COMPREPLY=( $(compgen -W "$verbs" -- "$cur") )
         return

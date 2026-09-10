@@ -44,9 +44,13 @@ base that boots on today's hardware.
 - [x] **live ISO** (`tools/build-iso.sh`, casper, 116 MB) — boots to `larzsh`,
       verified on VirtualBox 7.2
 - [x] `larz-install` — a Larzscript disk installer, no Calamares
+- [x] Claude Code preinstalled — `larz code` (`larz-claude-code`)
+- [ ] LarzOS phone app — run the OS in a proot userland, Termux-free
+- [ ] arm64 rootfs published (unblocks the phone app)
 - [ ] publish the WSL image to the Microsoft Store
-- [ ] arm64 rootfs / ISO (needs `qemu-user-static` on the build host)
 - [ ] `larz-aid`: real local model execution (ollama/llama.cpp wrapper)
+- [ ] Gateway: an Anthropic-compatible `/v1/messages` proxy so `larz code`
+      can route through it
 
 ## Phase 3 — the identity
 

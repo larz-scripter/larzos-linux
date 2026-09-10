@@ -87,6 +87,11 @@ Explain a file, or piped command output / an error.
 .B why " \fItopic\fR"
 Diagnose from live machine context (e.g. \fBlarz why boot slow\fR).
 .TP
+.B code " [\fIargs\fR]"
+Start Claude Code, Anthropic's terminal coding agent, in the current
+directory. Preinstalled (\fBlarz-claude-code\fR); see
+.BR larz-code (1).
+.TP
 .B ask " \fIquestion\fR"
 Q&A with this machine's facts as context.
 .SH FLEET

@@ -1,0 +1,39 @@
+.TH LARZ-CODE 1 "2026" "LarzOS" "LarzOS Manual"
+.SH NAME
+larz-code \- Claude Code, Anthropic's terminal coding agent, on LarzOS
+.SH SYNOPSIS
+.B larz code
+[\fICLAUDE-CODE-ARGS\fR]
+.br
+.B larz-code
+[\fICLAUDE-CODE-ARGS\fR]
+.SH DESCRIPTION
+Starts Claude Code in the current directory. Claude Code is Anthropic's
+agentic coding tool: it reads and edits files, runs commands, and works
+through multi\-step tasks from a natural\-language prompt.
+.PP
+It is preinstalled on LarzOS (the \fBlarz-claude-code\fR package). If the
+\fBclaude\fR command is missing when you run \fBlarz code\fR, it is fetched
+via npm automatically.
+.SH AUTHENTICATION
+Auth is yours, not the OS's. On the first run Claude Code walks you through
+signing in with your Anthropic account. Alternatively set an API key:
+.PP
+.RS
+export ANTHROPIC_API_KEY=sk\-ant\-...
+.RE
+.PP
+Add that line to \fI~/.larzsh/env\fR to make it persist.
+.SH GATEWAY ROUTING
+\fI/etc/larzos/claude-code.toml\fR may name a \fBbase_url\fR and
+\fBauth_token\fR. When both are set, \fBlarz-code\fR exports
+\fBANTHROPIC_BASE_URL\fR and \fBANTHROPIC_AUTH_TOKEN\fR so Claude Code talks
+to that endpoint instead of api.anthropic.com \- use this to route through
+the LarzOS Gateway.
+.SH FILES
+.TP
+.I /etc/larzos/claude-code.toml
+Optional gateway routing config.
+.SH SEE ALSO
+.BR larz (1),
+.BR larz-ai (8)

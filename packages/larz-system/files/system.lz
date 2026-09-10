@@ -15,7 +15,7 @@ larzos.system({
   #   { "name": "larz", "groups": ["sudo"], "shell": "/usr/bin/larzsh" },
   # ],
 
-  "packages": ["larz-system", "larz-ai"],
+  "packages": ["larz-system", "larz-ai", "larz-claude-code"],
 
   "services": {
     "larz-ai": "enabled",

@@ -53,7 +53,12 @@ pd sh -eu -c '
   echo "deb [signed-by=/usr/share/keyrings/larzos-archive-keyring.gpg] '"$APT_BASE"' stable main" \
     > /etc/apt/sources.list.d/larzos.list
   apt-get update -qq
-  apt-get install -y -qq larzscript larz-system larz-ai larzsh
+  apt-get install -y -qq larzscript larz-system larz-ai larzsh larz larz-branding
+  # Claude Code, preinstalled into the container (needs nodejs+npm - a bigger
+  # one-time download). Set LARZOS_NO_CLAUDE=1 to skip.
+  if [ -z "'"${LARZOS_NO_CLAUDE:-}"'" ]; then
+    apt-get install -y -qq larz-claude-code || echo "larz-claude-code: skipped (retry later: apt-get install larz-claude-code)"
+  fi
   larz-system version
 '
 
@@ -87,9 +92,11 @@ exec proot-distro login "$DISTRO" --shared-tmp --bind "$CONF_DIR:/etc/larzos" --
 EOF
   chmod 0755 "$PREFIX/bin/$1"
 }
-say "installing launchers: larz-system larz-aid larzos"
+say "installing launchers: larz larz-system larz-aid larz-code larzos"
+mk larz        larz
 mk larz-system larz-system
 mk larz-aid    larz-aid
+mk larz-code   larz-code
 cat > "$PREFIX/bin/larzos" <<EOF
 #!/data/data/com.termux/files/usr/bin/sh
 # drop into the LarzOS container shell
@@ -105,6 +112,7 @@ cat <<EOF
   larz-system show
   larz-aid  route --task coding
   larz-aid  serve &           # AI router on 127.0.0.1:8199 (inside the container)
+  larz code                   # Claude Code, in the current dir (signs in on first run)
   larzos                      # a full LarzOS (larzsh) shell
 
   Edit ~/.config/larzos/system.lz on the phone - it is /etc/larzos/system.lz

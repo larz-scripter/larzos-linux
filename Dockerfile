@@ -26,5 +26,8 @@ RUN apt-get update \
 
 COPY examples/system.lz /etc/larzos/system.lz
 
+# The container image stays minimal (it's for converging a machine, not living
+# in). Claude Code and a shell are one command away:  larz install larz-claude-code
+
 ENTRYPOINT ["larz"]
 CMD ["plan"]

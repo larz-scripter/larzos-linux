@@ -71,6 +71,10 @@ apt-get update
 # larz-branding's postinst runs `larz-rebrand apply`, so the image presents as
 # LarzOS the moment the package lands.
 apt-get install -y --no-install-recommends larz-branding larz larz-system larz-ai larzsh
+# Claude Code, preinstalled. larz-claude-code's postinst runs `npm i -g
+# @anthropic-ai/claude-code` inside the chroot (this build stage has network).
+apt-get install -y --no-install-recommends larz-claude-code || \
+  echo "build-rootfs: larz-claude-code install had a problem (continuing)"
 useradd -m -s /usr/bin/larzsh -G sudo larz
 echo 'larz ALL=(ALL) NOPASSWD:ALL' > /etc/sudoers.d/larz
 chmod 440 /etc/sudoers.d/larz
@@ -90,7 +94,7 @@ import "larzos" as larzos
 larzos.system({
   "hostname": "larzos",
   "users":    [ { "name": "larz", "groups": ["sudo"], "shell": "/usr/bin/larzsh" } ],
-  "packages": ["larz-branding", "larz", "larz-system", "larz-ai", "larzsh", "git", "curl"],
+  "packages": ["larz-branding", "larz", "larz-system", "larz-ai", "larzsh", "larz-claude-code", "git", "curl"],
   "services": { "larz-ai": "enabled" },
   "audio":    { "profile": "off" },
   "ai":       { "local_models": [], "gateway": "https://gateway.larzos.com" },

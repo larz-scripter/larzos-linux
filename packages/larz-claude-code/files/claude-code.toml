@@ -1,0 +1,16 @@
+# Claude Code on LarzOS.
+#
+# Start it:   larz code            (or:  larz-code  /  claude)
+#
+# Auth is yours. On the first run Claude Code signs you in with your Anthropic
+# account. To use an API key instead:
+#     echo 'export ANTHROPIC_API_KEY=sk-ant-...' >> ~/.larzsh/env
+#
+# --- routing through the LarzOS Gateway -------------------------------------
+# Leave these empty to talk to Anthropic directly (the default). Once the
+# LarzOS Gateway exposes an Anthropic-compatible /v1/messages endpoint, set:
+#     base_url   = "https://gateway.larzos.com"
+#     auth_token = "<your gateway token>"
+# and larz-code will export ANTHROPIC_BASE_URL / ANTHROPIC_AUTH_TOKEN for you.
+base_url   = ""
+auth_token = ""
