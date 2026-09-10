@@ -1,95 +1,97 @@
 # LarzOS on Windows
 
-LarzOS runs on Windows as **its own app** — its own icon, its own Start-menu
-entry, its own Windows Terminal profile. You click it and you're in LarzOS. It
-uses the Windows Linux engine (the same one Ubuntu, Debian and Kali use on
-Windows) underneath, but nothing in the UI says "WSL".
+LarzOS runs on Windows as **its own app** — own icon, own desktop shortcut, own
+Start-menu entry, own Windows Terminal profile. Double-click it and you're in
+LarzOS. Under the hood it uses the Windows Linux engine (the same component
+Ubuntu, Debian and Kali use on Windows), but nothing in the UI says "WSL", and
+**LarzOS sets that engine up itself on first run** — the user never installs WSL
+or opens a Store page.
 
-One prerequisite, one time: the Windows Linux engine must be turned on. Most
-Windows 11 machines already have it. If not, LarzOS tells you to run
-`wsl --install --no-distribution` in an admin PowerShell and reboot — after that
-you never touch it again. (There is no way to give a real Linux environment on
-Windows without this component or a full virtual machine.)
+## First run, on a PC that has never had WSL
 
-## 1. `LarzOS` — the installed app (recommended)
+1. Double-click LarzOS.
+2. It says it's doing a one-time setup; Windows asks permission → **Yes**.
+3. LarzOS turns on the Windows virtualization feature and installs the Linux
+   engine **from a copy bundled inside LarzOS** — no internet needed.
+4. "Restart Windows." A **LarzOS icon is now on the desktop**; after the restart,
+   double-click it (it also opens once on its own after you sign back in).
+5. LarzOS unpacks (about a minute) and a shell opens as the `larz` user.
 
-Download **`LarzOS_<ver>_x64.msix`** + **`LarzOS.cer`** from the
-[latest release](https://github.com/larz-scripter/larzos-linux/releases/latest).
+Every launch after that is instant.
 
-1. Double-click `LarzOS.cer` → *Install Certificate* → *Local Machine* →
-   *Place all certificates in the following store* → *Trusted People*. (One time;
-   this is only needed until LarzOS is in the Microsoft Store.)
-2. Double-click `LarzOS_<ver>_x64.msix` → *Install*.
+The only things that genuinely can't be removed: 64-bit Windows 10 2004+ / 11,
+CPU virtualization enabled in BIOS (on by default on most machines), admin + one
+restart for that first setup. A real Linux environment on Windows needs the
+virtualization feature or a full VM — there's no way around it in a plain `.exe`.
 
-**LarzOS** is now in your Start menu with the LarzOS icon. Click it → first
-launch unpacks (about a minute), then a LarzOS shell opens as the `larz` user.
-Every launch after that is instant. Windows Terminal gets a **LarzOS** profile
-automatically.
+## Installers
 
-## 2. `LarzOS.exe` — the loose version (no install step)
+Both come off the [latest release](https://github.com/larz-scripter/larzos-linux/releases/latest),
+both are **fully offline** (the Linux engine is bundled):
 
-Download **`LarzOS-WSL-<ver>-x64.zip`**, extract it anywhere, run **`LarzOS.exe`**.
-First run registers LarzOS and opens a shell; run it again any time for a shell.
-The zip is just `LarzOS.exe` + `install.tar.gz` — keep them together. Windows
-SmartScreen shows an "unknown publisher" notice on the first run (*More info →
-Run anyway*); that goes away once LarzOS is Store-signed.
+### `LarzOS_<ver>_x64.msix` — the installed app (recommended)
 
-```
-LarzOS.exe                     install if needed, then open a shell
-LarzOS.exe install [--root]    install only; --root skips the default user
-LarzOS.exe run <command>       run a command inside LarzOS
-LarzOS.exe config --default-user <name>
-```
+Download it plus `LarzOS.cer`. Once:
+`LarzOS.cer` → *Install Certificate* → *Local Machine* → *Trusted People*
+(needed only until LarzOS is in the Microsoft Store). Then double-click the
+`.msix` → *Install*. **LarzOS** lands in the Start menu; first launch does the
+engine setup above and drops the desktop icon.
 
-## 3. `.wsl` file — one command, for people who use `wsl` directly
+### `LarzOS-WSL-<ver>-x64.zip` — the loose version
 
-```powershell
-wsl --install --from-file larzos-<ver>.wsl        # WSL 2.4.4+
-```
+Extract anywhere, run **`LarzOS.exe`**. Same first-run flow. The zip is
+`LarzOS.exe` + `install.tar.gz` (the LarzOS rootfs) + `wsl.msi` (the offline
+engine) — keep them together. SmartScreen shows "unknown publisher" once
+(*More info → Run anyway*) until LarzOS is Store-signed.
 
-Same branded result (name, icon, first-run, terminal profile are baked into the
-rootfs), registered through the `wsl` CLI. Classic import for older WSL:
-`wsl --import LarzOS C:\LarzOS larzos-rootfs-amd64-<ver>.tar.gz`.
+### `larzos-<ver>.wsl` — for people who use `wsl` directly
+
+`wsl --install --from-file larzos-<ver>.wsl` (WSL 2.4.4+). Assumes WSL is
+already set up; doesn't carry the bundled engine.
 
 ---
 
 ## What's in this directory
 
 A fork of Microsoft's [WSL-DistroLauncher](https://github.com/microsoft/WSL-DistroLauncher)
-reference implementation (MIT — see `LICENSE`), rebranded for LarzOS. This is the
-same mechanism the first-party Ubuntu/Debian/Kali Windows apps are built on.
+(MIT — see `LICENSE`), the same mechanism the first-party Ubuntu/Debian/Kali
+Windows apps use.
 
 | Path | What it is |
 |---|---|
-| `DistroLauncher/` | `LarzOS.exe` — the console launcher (plain Win32 + `wslapi.dll`) |
-| `DistroLauncher-Appx/` | the MSIX packaging project — makes `LarzOS.exe` an installed app |
+| `DistroLauncher/` | `LarzOS.exe` — the launcher + first-run engine setup (Win32 + `wslapi.dll`) |
+| `DistroLauncher-Appx/` | the MSIX packaging project — makes LarzOS an installed app |
 | `LarzOS.sln` | both projects, for Visual Studio |
 | `build.ps1` | local build helper (`-Appx` also builds the MSIX) |
 
-Changes from upstream: distro name `LarzOS`, output `LarzOS.exe`, app execution
-alias `larzos.exe`, LarzOS icon + tiles, `#0B1020` splash/tile colour, all
-user-facing strings and URLs, the "enter a UNIX username" prompt removed (the
-rootfs ships `larz` at uid 1000, so the launcher just marks it the default), and
-a LarzOS-worded message when the Windows Linux engine is off.
+Changes from upstream: distro name `LarzOS`, output `LarzOS.exe`, execution
+alias `larzos.exe`, LarzOS icon + tiles + `#0B1020` colour, all user-facing
+strings/URLs, no username prompt (rootfs ships `larz` uid 1000), **first-run
+engine bootstrap** (`EnsureEngine` in `DistroLauncher.cpp`: DISM +
+bundled `wsl.msi`, or `wsl --install` as backstop), and a desktop shortcut +
+RunOnce resume after the setup reboot.
 
 ## Building
 
-`LarzOS.exe` alone builds with **Visual Studio 2022 + "Desktop development with
-C++"** and a Windows SDK:
+`LarzOS.exe` alone: **Visual Studio 2022 + "Desktop development with C++"** + a
+Windows SDK.
 
 ```powershell
-.\build.ps1                      # -> build\x64\LarzOS.exe
-.\build.ps1 -Appx                # also the MSIX (needs the UWP workload)
+.\build.ps1            # -> build\x64\LarzOS.exe
+.\build.ps1 -Appx      # also the MSIX (needs the UWP workload + a cert)
 ```
 
-CI (`.github/workflows/windows.yml`) builds both `LarzOS.exe` (x64 + ARM64) and
-the signed MSIX on every push touching `windows/`. On a tagged release,
-`release.yml` bundles `LarzOS.exe` with the rootfs into `LarzOS-WSL-<ver>-*.zip`
-and attaches the `.msix` + `.cer`.
+CI (`.github/workflows/windows.yml`) builds `LarzOS.exe` (x64 + ARM64) and the
+signed MSIX on every push touching `windows/`. On a tag, `release.yml` fetches
+`microsoft/WSL`'s MIT runtime MSI, bundles it, and attaches the zips + `.msix` +
+`.cer`.
+
+> **Status:** everything here compiles in CI. It has **not** been run on a real
+> Windows machine yet — the first-run elevation / DISM / reboot-resume path in
+> particular needs on-device testing.
 
 ### Microsoft Store
 
-The MSIX is currently **self-signed** (hence the certificate step above). A Store
-listing — clean double-click install, no certificate, auto-updates — needs a
-Microsoft Partner Center account and a submission; that is tracked in the repo
-`ROADMAP.md`.
+The MSIX is **self-signed** today (hence the certificate step). A Store listing —
+clean install, no cert, auto-updates — needs a Partner Center account; tracked in
+the repo `ROADMAP.md`.
