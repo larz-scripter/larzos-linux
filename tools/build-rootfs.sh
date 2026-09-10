@@ -148,7 +148,7 @@ for m in proc sys dev dev/pts; do mount --bind "/$m" "$ROOT/$m"; done
 mkdir -p "$ROOT/etc/apt/apt.conf.d"
 echo 'APT::Sandbox::User "root";' > "$ROOT/etc/apt/apt.conf.d/99larzos-no-sandbox"
 
-chroot "$ROOT" env LARZOS_CLAUDE="${LARZOS_CLAUDE:-1}" /bin/sh -eux <<'CHROOT'
+chroot "$ROOT" env LARZOS_CLAUDE="${LARZOS_CLAUDE:-1}" ARCH="$ARCH" /bin/sh -eux <<'CHROOT'
 export DEBIAN_FRONTEND=noninteractive
 apt-get update
 # larz-branding's postinst runs `larz-rebrand apply`, so the image presents as
@@ -160,19 +160,41 @@ apt-get install -y --no-install-recommends \
   nano procps iproute2 iputils-ping dnsutils net-tools \
   bash-completion ncurses-bin xz-utils unzip zip file tar gzip bzip2 \
   htop tree jq
-# Claude Code, preinstalled (LARZOS_CLAUDE=0 skips the big node layer).
-# larz-claude-code's postinst runs `npm i -g @anthropic-ai/claude-code`.
+# Claude Code, preinstalled (LARZOS_CLAUDE=0 skips this ~150MB node layer).
+# Claude Code 2.x needs Node >= 22 and a per-arch native binary; Debian stable
+# ships Node 20, so bring our own Node into /opt and do the global install with
+# it, on the same arch as this rootfs. Then apt-install larz-claude-code (its
+# postinst sees `claude` already present and skips its own npm run).
 if [ "${LARZOS_CLAUDE:-1}" = 1 ]; then
+  case "${ARCH:-amd64}" in
+    amd64) NODE_ARCH=x64 ;;
+    arm64) NODE_ARCH=arm64 ;;
+    armhf) NODE_ARCH=armv7l ;;
+    *)     NODE_ARCH=x64 ;;
+  esac
+  NODE_VER="$(curl -fsSL https://nodejs.org/dist/index.json \
+    | jq -r 'map(select(.version|startswith("v22.")))|.[0].version')"
+  : "${NODE_VER:?could not resolve a Node 22 release}"
+  echo "build-rootfs: Node $NODE_VER ($NODE_ARCH) for Claude Code"
+  curl -fsSL "https://nodejs.org/dist/${NODE_VER}/node-${NODE_VER}-linux-${NODE_ARCH}.tar.xz" \
+    -o /tmp/node.tar.xz
+  mkdir -p /opt/node
+  tar -xJf /tmp/node.tar.xz -C /opt/node --strip-components=1
+  rm -f /tmp/node.tar.xz
+  # our Node wins on PATH (guest PATH starts /usr/local/bin)
+  for b in node npm npx; do ln -sf "/opt/node/bin/$b" "/usr/local/bin/$b"; done
+
+  /opt/node/bin/npm install -g --no-fund --no-audit @anthropic-ai/claude-code \
+    || echo "build-rootfs: claude-code npm install had a problem (continuing)"
+  # expose the claude bin on the normal PATH
+  if [ -e /opt/node/bin/claude ]; then
+    ln -sf /opt/node/bin/claude /usr/local/bin/claude
+  fi
+
   apt-get install -y --no-install-recommends larz-claude-code || \
     echo "build-rootfs: larz-claude-code install had a problem (continuing)"
-  # make sure `claude` is actually on PATH, wherever npm put it
-  if ! command -v claude >/dev/null 2>&1; then
-    m="$(npm root -g 2>/dev/null)/@anthropic-ai/claude-code"
-    if [ -f "$m/cli.js" ]; then
-      ln -sf "$m/cli.js" /usr/local/bin/claude
-      chmod +x /usr/local/bin/claude || true
-    fi
-  fi
+
+  command -v claude && claude --version || echo "build-rootfs: WARNING - claude not runnable"
 fi
 useradd -m -s /usr/bin/larzsh -G sudo larz
 echo 'larz ALL=(ALL) NOPASSWD:ALL' > /etc/sudoers.d/larz
