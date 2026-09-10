@@ -157,14 +157,24 @@
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
   <ImportGroup Label="ExtensionTargets">
   </ImportGroup>
+  <!--
+    This project has no C++ sources. LarzOS.exe (built by the `LarzOS` project)
+    is the app payload and must land in this project's $(OutDir) as
+    $(TargetName).exe before packaging. In Visual Studio the solution
+    dependency builds LarzOS first and this step copies it across; the CI build
+    also drops it into $(OutDir) directly, so the copy is a no-op there.
+  -->
   <ItemGroup>
-    <CustomBuild Include="$(TargetName)">
+    <CustomBuild Include="stage-launcher.txt">
       <FileType>Document</FileType>
       <ExcludedFromBuild>false</ExcludedFromBuild>
-      <Message>Stage LarzOS.exe into the MSIX payload</Message>
-      <Command>if not exist "$(SolutionDir)$(Platform)\$(Configuration)\$(ProjectName)\" md "$(SolutionDir)$(Platform)\$(Configuration)\$(ProjectName)\"
-copy /Y "$(SolutionDir)$(Platform)\$(Configuration)\LarzOS.exe" "$(SolutionDir)$(Platform)\$(Configuration)\$(ProjectName)\$(TargetName).exe"</Command>
-      <Outputs>$(SolutionDir)$(Platform)\$(Configuration)\$(ProjectName)\$(TargetName).exe</Outputs>
+      <Message>Stage LarzOS.exe into the MSIX payload ($(OutDir))</Message>
+      <AdditionalInputs>$(SolutionDir)$(Platform)\$(Configuration)\LarzOS.exe;%(AdditionalInputs)</AdditionalInputs>
+      <Command>if not exist "$(OutDir)" md "$(OutDir)"
+if exist "$(SolutionDir)$(Platform)\$(Configuration)\LarzOS.exe" copy /Y "$(SolutionDir)$(Platform)\$(Configuration)\LarzOS.exe" "$(OutDir)$(TargetName).exe"
+if not exist "$(OutDir)$(TargetName).exe" (echo LarzOS.exe was not staged into "$(OutDir)" & exit /b 1)
+exit /b 0</Command>
+      <Outputs>$(OutDir)$(TargetName).exe;%(Outputs)</Outputs>
     </CustomBuild>
   </ItemGroup>
 </Project>

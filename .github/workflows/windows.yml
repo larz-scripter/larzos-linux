@@ -69,16 +69,29 @@ jobs:
         run: |
           $sdk = (Get-ChildItem "C:\Program Files (x86)\Windows Kits\10\Include" -Directory |
                   Where-Object Name -match '^10\.' | Sort-Object Name | Select-Object -Last 1).Name
-          msbuild windows\LarzOS.sln `
-            /p:Configuration=Release /p:Platform=x64 `
-            /p:WindowsTargetPlatformVersion=$sdk `
+          $sln = "$PWD\windows\"
+          # Both projects share one OutDir so the .exe is exactly where the
+          # AppX packaging step looks for the app payload.
+          $out = "$sln`x64\Release\DistroLauncher-Appx\"
+
+          msbuild windows\DistroLauncher\LarzOS.vcxproj `
+            /p:Configuration=Release /p:Platform=x64 /p:SolutionDir=$sln `
+            /p:WindowsTargetPlatformVersion=$sdk /p:OutDir=$out /m /nologo
+          if ($LASTEXITCODE -ne 0) { throw "launcher build failed" }
+
+          msbuild windows\DistroLauncher-Appx\DistroLauncher-Appx.vcxproj `
+            /p:Configuration=Release /p:Platform=x64 /p:SolutionDir=$sln `
+            /p:WindowsTargetPlatformVersion=$sdk /p:OutDir=$out `
             /p:AppxBundle=Never /p:UapAppxPackageBuildMode=SideloadOnly `
             /p:AppxPackageSigningEnabled=true `
             /p:PackageCertificateKeyFile=LarzOS-Appx_TemporaryKey.pfx `
             /p:PackageCertificatePassword=larzos `
             /m /nologo
           if ($LASTEXITCODE -ne 0) { throw "MSIX build failed" }
-          Get-ChildItem -Recurse windows -Include *.msix,*.msixbundle | Select-Object FullName, Length
+
+          $pkgs = Get-ChildItem -Recurse windows -Include *.msix,*.msixbundle
+          $pkgs | Select-Object FullName, Length
+          if (-not $pkgs) { throw "no .msix produced" }
 
       - uses: actions/upload-artifact@v4
         with:

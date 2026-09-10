@@ -1,0 +1,2 @@
+Marker so MSBuild has a real CustomBuild input. See the CustomBuild step
+in DistroLauncher-Appx.vcxproj: it stages LarzOS.exe into the MSIX payload.
