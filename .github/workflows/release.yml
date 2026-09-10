@@ -111,10 +111,18 @@ jobs:
         uses: microsoft/setup-msbuild@v2
 
       - name: Build LarzOS.exe (x64 + ARM64, Release)
-        shell: cmd
+        shell: pwsh
         run: |
-          msbuild windows\DistroLauncher\LarzOS.vcxproj /p:Configuration=Release /p:Platform=x64 /p:OutDir=%CD%\build\x64\ /m /nologo || exit /b 1
-          msbuild windows\DistroLauncher\LarzOS.vcxproj /p:Configuration=Release /p:Platform=ARM64 /p:OutDir=%CD%\build\arm64\ /m /nologo || exit /b 1
+          $sdk = (Get-ChildItem "C:\Program Files (x86)\Windows Kits\10\Include" -Directory |
+                  Where-Object Name -match '^10\.' | Sort-Object Name | Select-Object -Last 1).Name
+          Write-Host "Windows SDK: $sdk"
+          foreach ($p in 'x64','ARM64') {
+            msbuild windows\DistroLauncher\LarzOS.vcxproj `
+              /p:Configuration=Release /p:Platform=$p `
+              /p:WindowsTargetPlatformVersion=$sdk `
+              /p:OutDir=$PWD\build\$p\ /m /nologo
+            if ($LASTEXITCODE -ne 0) { throw "build failed for $p" }
+          }
 
       - name: Bundle each LarzOS.exe with its rootfs
         shell: pwsh
@@ -125,10 +133,10 @@ jobs:
           gh release download "${{ github.ref_name }}" --pattern "larzos-rootfs-amd64-*.tar.gz" --output rootfs-x64.tar.gz
           gh release download "${{ github.ref_name }}" --pattern "larzos-rootfs-arm64-*.tar.gz" --output rootfs-arm64.tar.gz
           New-Item -ItemType Directory -Force dist | Out-Null
-          foreach ($a in @(@{arch='x64'}, @{arch='arm64'})) {
+          foreach ($a in @(@{plat='x64'; arch='x64'}, @{plat='ARM64'; arch='arm64'})) {
             $d = "pkg-$($a.arch)"
             New-Item -ItemType Directory -Force $d | Out-Null
-            Copy-Item "build/$($a.arch)/LarzOS.exe" "$d/LarzOS.exe"
+            Copy-Item "build/$($a.plat)/LarzOS.exe" "$d/LarzOS.exe"
             Copy-Item "rootfs-$($a.arch).tar.gz"    "$d/install.tar.gz"
             Copy-Item "windows/README.md"           "$d/README.txt"
             Copy-Item "windows/LICENSE"             "$d/LICENSE.txt"

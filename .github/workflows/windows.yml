@@ -1,4 +1,4 @@
-name: windows-launcher
+name: windows-launcher-ci
 
 # Compile-check for the LarzOS WSL launcher (windows/). The real release
 # artifact - LarzOS.exe bundled with the rootfs - is built by release.yml on a
@@ -20,27 +20,24 @@ jobs:
       - name: Add MSBuild to PATH
         uses: microsoft/setup-msbuild@v2
 
-      - name: Build LarzOS.exe (x64, Release)
-        shell: cmd
-        run: >
-          msbuild windows\DistroLauncher\LarzOS.vcxproj
-          /p:Configuration=Release /p:Platform=x64
-          /p:OutDir=%CD%\build\x64\ /m /nologo
-
-      - name: Build LarzOS.exe (ARM64, Release)
-        shell: cmd
-        run: >
-          msbuild windows\DistroLauncher\LarzOS.vcxproj
-          /p:Configuration=Release /p:Platform=ARM64
-          /p:OutDir=%CD%\build\arm64\ /m /nologo
-
-      - name: Show output
+      - name: Build LarzOS.exe (x64 + ARM64, Release)
         shell: pwsh
-        run: Get-ChildItem -Recurse build | Select-Object FullName, Length
+        run: |
+          $sdk = (Get-ChildItem "C:\Program Files (x86)\Windows Kits\10\Include" -Directory |
+                  Where-Object Name -match '^10\.' | Sort-Object Name | Select-Object -Last 1).Name
+          Write-Host "Windows SDK: $sdk"
+          foreach ($p in 'x64','ARM64') {
+            msbuild windows\DistroLauncher\LarzOS.vcxproj `
+              /p:Configuration=Release /p:Platform=$p `
+              /p:WindowsTargetPlatformVersion=$sdk `
+              /p:OutDir=$PWD\build\$p\ /m /nologo
+            if ($LASTEXITCODE -ne 0) { throw "build failed for $p" }
+          }
+          Get-ChildItem -Recurse build -Filter LarzOS.exe | Select-Object FullName, Length
 
       - uses: actions/upload-artifact@v4
         with:
           name: LarzOS-exe
           path: |
             build/x64/LarzOS.exe
-            build/arm64/LarzOS.exe
+            build/ARM64/LarzOS.exe
