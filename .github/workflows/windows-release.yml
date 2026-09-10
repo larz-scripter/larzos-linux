@@ -1,0 +1,146 @@
+name: windows-release
+
+# Builds the LarzOS Windows installers for an existing GitHub release and
+# uploads them to it:
+#   * LarzOS_<ver>_x64.msix (+ LarzOS.cer)  - LarzOS as an installed app
+#   * LarzOS-WSL-<ver>-{x64,arm64}.zip       - loose LarzOS.exe + rootfs + wsl.msi
+#
+# Called by release.yml on a tag, and runnable by hand against any tag whose
+# rootfs assets are already on the release (handy for iterating on the Windows
+# build without re-running the whole release pipeline).
+
+on:
+  workflow_call:
+    inputs:
+      tag:
+        required: true
+        type: string
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "release tag to build for (its rootfs assets must already be attached)"
+        required: true
+        type: string
+
+jobs:
+  build:
+    runs-on: windows-2022
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Add MSBuild to PATH
+        uses: microsoft/setup-msbuild@v2
+
+      - name: Resolve the Windows SDK
+        shell: pwsh
+        run: |
+          $sdk = (Get-ChildItem "C:\Program Files (x86)\Windows Kits\10\Include" -Directory |
+                  Where-Object Name -match '^10\.' | Sort-Object Name | Select-Object -Last 1).Name
+          "SDK=$sdk" | Out-File -Append $env:GITHUB_ENV
+
+      - name: Build LarzOS.exe (x64 + ARM64, Release)
+        shell: pwsh
+        run: |
+          foreach ($p in 'x64','ARM64') {
+            msbuild windows\DistroLauncher\LarzOS.vcxproj `
+              /p:Configuration=Release /p:Platform=$p `
+              /p:WindowsTargetPlatformVersion=$env:SDK `
+              /p:OutDir=$PWD\build\$p\ /m /nologo
+            if ($LASTEXITCODE -ne 0) { throw "launcher build failed for $p" }
+          }
+
+      - name: Fetch inputs - rootfs (from the release) + WSL runtime (MIT microsoft/WSL)
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ inputs.tag }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          New-Item -ItemType Directory -Force inputs | Out-Null
+
+          gh release download "$env:TAG" --pattern "larzos-rootfs-amd64-*.tar.gz" --dir inputs
+          if ($LASTEXITCODE) { throw "amd64 rootfs download failed for $env:TAG" }
+          gh release download "$env:TAG" --pattern "larzos-rootfs-arm64-*.tar.gz" --dir inputs
+          if ($LASTEXITCODE) { throw "arm64 rootfs download failed for $env:TAG" }
+          Move-Item (Get-Item inputs\larzos-rootfs-amd64-*.tar.gz).FullName inputs\rootfs-x64.tar.gz
+          Move-Item (Get-Item inputs\larzos-rootfs-arm64-*.tar.gz).FullName inputs\rootfs-arm64.tar.gz
+
+          foreach ($a in 'x64','arm64') {
+            gh release download --repo microsoft/WSL --pattern "*.$a.msi" --dir inputs
+            $m = Get-ChildItem inputs\*.$a.msi -ErrorAction SilentlyContinue | Select-Object -First 1
+            if ($m) { Move-Item $m.FullName "inputs\wsl-$a.msi" }
+            else { Write-Warning "no WSL $a MSI - that arch falls back to 'wsl --install'" }
+          }
+          if (-not (Test-Path inputs\wsl-x64.msi)) { throw "the x64 WSL MSI is required" }
+          Get-ChildItem inputs | Select-Object Name, Length
+
+      - name: Build the LarzOS MSIX (x64, self-signed)
+        shell: pwsh
+        env:
+          TAG: ${{ inputs.tag }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $sln = "$PWD\windows\"
+          New-Item -ItemType Directory -Force "$sln`x64\Release" | Out-Null
+          Copy-Item inputs\rootfs-x64.tar.gz "$sln`x64\install.tar.gz" -Force
+          Copy-Item build\x64\LarzOS.exe     "$sln`x64\Release\LarzOS.exe" -Force
+          Copy-Item inputs\wsl-x64.msi       "$sln`DistroLauncher-Appx\wsl.msi" -Force
+          if (-not (Test-Path "$sln`x64\install.tar.gz")) { throw "install.tar.gz not staged" }
+
+          $cert = New-SelfSignedCertificate -Type Custom -Subject "CN=Larz Scripter" `
+            -KeyUsage DigitalSignature -FriendlyName "LarzOS (self-signed)" `
+            -CertStoreLocation "Cert:\CurrentUser\My" `
+            -TextExtension @("2.5.29.37={text}1.3.6.1.5.5.7.3.3", "2.5.29.19={text}")
+          $pw = ConvertTo-SecureString -String "larzos" -Force -AsPlainText
+          Export-PfxCertificate -Cert $cert -Password $pw `
+            -FilePath windows\DistroLauncher-Appx\LarzOS-Appx_TemporaryKey.pfx | Out-Null
+          New-Item -ItemType Directory -Force dist | Out-Null
+          Export-Certificate -Cert $cert -FilePath dist\LarzOS.cer | Out-Null
+
+          msbuild windows\DistroLauncher-Appx\DistroLauncher-Appx.vcxproj `
+            /p:Configuration=Release /p:Platform=x64 /p:SolutionDir=$sln `
+            /p:WindowsTargetPlatformVersion=$env:SDK `
+            /p:AppxBundle=Never /p:UapAppxPackageBuildMode=SideloadOnly `
+            /p:AppxPackageSigningEnabled=true `
+            /p:PackageCertificateKeyFile=LarzOS-Appx_TemporaryKey.pfx `
+            /p:PackageCertificatePassword=larzos /m /nologo
+          if ($LASTEXITCODE -ne 0) { throw "MSIX build failed" }
+
+          $V = "$env:TAG" -replace '^v',''
+          $msix = Get-ChildItem -Recurse windows -Filter *.msix | Select-Object -First 1
+          if (-not $msix) { throw "no .msix produced" }
+          Copy-Item $msix.FullName "dist/LarzOS_${V}_x64.msix"
+
+      - name: Bundle each LarzOS.exe with its rootfs + offline engine
+        shell: pwsh
+        env:
+          TAG: ${{ inputs.tag }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $V = "$env:TAG" -replace '^v',''
+          New-Item -ItemType Directory -Force dist | Out-Null
+          foreach ($a in @(@{plat='x64'; arch='x64'}, @{plat='ARM64'; arch='arm64'})) {
+            $d = "pkg-$($a.arch)"
+            New-Item -ItemType Directory -Force $d | Out-Null
+            Copy-Item "build/$($a.plat)/LarzOS.exe"     "$d/LarzOS.exe"
+            Copy-Item "inputs/rootfs-$($a.arch).tar.gz" "$d/install.tar.gz"
+            if (Test-Path "inputs/wsl-$($a.arch).msi") { Copy-Item "inputs/wsl-$($a.arch).msi" "$d/wsl.msi" }
+            Copy-Item "windows/README.md"               "$d/README.txt"
+            Copy-Item "windows/LICENSE"                 "$d/LICENSE.txt"
+            $zip = "dist/LarzOS-WSL-$V-$($a.arch).zip"
+            Compress-Archive -Path "$d/*" -DestinationPath $zip -Force
+          }
+          Get-ChildItem dist -File | ForEach-Object {
+            (Get-FileHash $_.FullName -Algorithm SHA256).Hash.ToLower() + "  " + $_.Name
+          } | Out-File -Encoding ascii "dist/LarzOS-windows-$V.sha256"
+          Get-ChildItem dist
+
+      - name: Upload the Windows installers to the release
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ inputs.tag }}
+        run: |
+          gh release upload "$env:TAG" (Get-ChildItem dist\* | ForEach-Object FullName) --clobber
