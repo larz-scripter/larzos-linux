@@ -82,9 +82,11 @@ jobs:
           $exe = (Get-ChildItem -Recurse $sln -Filter LarzOS.exe |
                   Where-Object FullName -notmatch 'Appx' | Select-Object -First 1).FullName
           if (-not $exe) { throw "LarzOS.exe not found after launcher build" }
-          New-Item -ItemType Directory -Force "$sln`x64\Release" | Out-Null
-          Copy-Item $exe "$sln`x64\Release\LarzOS.exe" -Force
-          Write-Host "staged $exe"
+          $dst = Join-Path $sln "x64\Release\LarzOS.exe"
+          New-Item -ItemType Directory -Force (Split-Path $dst) | Out-Null
+          if ($exe -ne $dst) { Copy-Item $exe $dst -Force }
+          if (-not (Test-Path $dst)) { throw "failed to stage LarzOS.exe at $dst" }
+          Write-Host "launcher staged: $dst"
 
           # 3. Package + sign.
           msbuild windows\DistroLauncher-Appx\DistroLauncher-Appx.vcxproj `
