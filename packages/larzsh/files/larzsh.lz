@@ -48,8 +48,14 @@ fn builtin(cmd, rest, line) {
     return true
   }
   if cmd == "help" {
-    print("larzsh builtins: cd  pwd  export  env  help  about  exit")
-    print("everything else runs via /bin/sh (pipes, >, &&, || all work).")
+    print("larzsh builtins:  cd  pwd  export  env  help  about  exit")
+    print("Everything else runs via /bin/sh - pipes, >, &&, || all work.")
+    print("")
+    print("Run the machine:   larz            (larz doctor | larz code | larz do \"...\")")
+    print("Add software:      sudo apt install <pkg>      e.g. sudo apt install python3")
+    print("Claude Code:       larz code       (installs on first run, then signs you in)")
+    print("Your config:       /etc/larzos/system.lz  ->  sudo larz apply")
+    print("No network?        sudo sh -c 'echo nameserver 1.1.1.1 > /etc/resolv.conf'")
     return true
   }
   if cmd == "about" {

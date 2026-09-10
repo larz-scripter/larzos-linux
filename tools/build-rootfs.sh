@@ -142,17 +142,37 @@ fi
 
 for m in proc sys dev dev/pts; do mount --bind "/$m" "$ROOT/$m"; done
 
+# apt's download/extract sandbox (the _apt user) can't drop privileges inside a
+# proot userland (the phone app), so apt-get fails there. Run it as root - a
+# small trade-off that makes `apt install` work everywhere this rootfs runs.
+mkdir -p "$ROOT/etc/apt/apt.conf.d"
+echo 'APT::Sandbox::User "root";' > "$ROOT/etc/apt/apt.conf.d/99larzos-no-sandbox"
+
 chroot "$ROOT" env LARZOS_CLAUDE="${LARZOS_CLAUDE:-1}" /bin/sh -eux <<'CHROOT'
 export DEBIAN_FRONTEND=noninteractive
 apt-get update
 # larz-branding's postinst runs `larz-rebrand apply`, so the image presents as
 # LarzOS the moment the package lands.
 apt-get install -y --no-install-recommends larz-branding larz larz-system larz-ai larzsh
+# The command-line tools people expect on a Linux box out of the box.
+apt-get install -y --no-install-recommends \
+  openssh-client openssh-server git wget ca-certificates \
+  nano procps iproute2 iputils-ping dnsutils net-tools \
+  bash-completion ncurses-bin xz-utils unzip zip file tar gzip bzip2 \
+  htop tree jq
 # Claude Code, preinstalled (LARZOS_CLAUDE=0 skips the big node layer).
 # larz-claude-code's postinst runs `npm i -g @anthropic-ai/claude-code`.
 if [ "${LARZOS_CLAUDE:-1}" = 1 ]; then
   apt-get install -y --no-install-recommends larz-claude-code || \
     echo "build-rootfs: larz-claude-code install had a problem (continuing)"
+  # make sure `claude` is actually on PATH, wherever npm put it
+  if ! command -v claude >/dev/null 2>&1; then
+    m="$(npm root -g 2>/dev/null)/@anthropic-ai/claude-code"
+    if [ -f "$m/cli.js" ]; then
+      ln -sf "$m/cli.js" /usr/local/bin/claude
+      chmod +x /usr/local/bin/claude || true
+    fi
+  fi
 fi
 useradd -m -s /usr/bin/larzsh -G sudo larz
 echo 'larz ALL=(ALL) NOPASSWD:ALL' > /etc/sudoers.d/larz

@@ -375,7 +375,7 @@ else if cmd == "rebrand" {
 }
 else if cmd == "version" or cmd == "--version" {
   banner()
-  for p in ["larzscript", "larz", "larz-system", "larz-ai", "larzsh", "larz-branding"] {
+  for p in ["larzscript", "larz", "larz-system", "larz-ai", "larzsh", "larz-branding", "larz-claude-code", "larz-desktop"] {
     let v = out("dpkg-query -W -f='${Version}' " + p + " 2>/dev/null")
     if v != "" { print("  " + p + " " + v) }
   }

@@ -7,6 +7,14 @@ case "$1" in
     elif command -v npm >/dev/null 2>&1; then
       echo "larz-claude-code: installing @anthropic-ai/claude-code (npm, global)..."
       if npm install -g --no-fund --no-audit @anthropic-ai/claude-code; then
+        # npm's global bin dir isn't always on PATH; make sure `claude` is.
+        if ! command -v claude >/dev/null 2>&1; then
+          m="$(npm root -g 2>/dev/null)/@anthropic-ai/claude-code"
+          if [ -f "$m/cli.js" ]; then
+            ln -sf "$m/cli.js" /usr/local/bin/claude
+            chmod +x /usr/local/bin/claude 2>/dev/null || true
+          fi
+        fi
         echo "larz-claude-code: done. Run 'larz code' to start (first run signs you in)."
       else
         echo "larz-claude-code: npm install did not complete (offline?)."
