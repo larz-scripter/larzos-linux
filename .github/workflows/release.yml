@@ -134,9 +134,12 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          gh release download --repo microsoft/WSL --pattern "*.x64.msi" --output wsl-x64.msi --clobber
-          gh release download --repo microsoft/WSL --pattern "*.arm64.msi" --output wsl-arm64.msi --clobber
-          Get-ChildItem wsl-*.msi | Select-Object Name, Length
+          foreach ($a in 'x64','arm64') {
+            gh release download --repo microsoft/WSL --pattern "*.$a.msi" --output "wsl-$a.msi" --clobber
+            if ($LASTEXITCODE -ne 0) { Write-Warning "no WSL $a MSI on the latest release - that arch falls back to 'wsl --install'" }
+          }
+          if (-not (Test-Path wsl-x64.msi)) { throw "the x64 WSL MSI is required" }
+          Get-ChildItem wsl-*.msi -ErrorAction SilentlyContinue | Select-Object Name, Length
 
       - name: Build the LarzOS MSIX (x64, self-signed)
         shell: pwsh
@@ -185,7 +188,7 @@ jobs:
             New-Item -ItemType Directory -Force $d | Out-Null
             Copy-Item "build/$($a.plat)/LarzOS.exe" "$d/LarzOS.exe"
             Copy-Item "rootfs-$($a.arch).tar.gz"    "$d/install.tar.gz"
-            Copy-Item "wsl-$($a.arch).msi"          "$d/wsl.msi"
+            if (Test-Path "wsl-$($a.arch).msi") { Copy-Item "wsl-$($a.arch).msi" "$d/wsl.msi" }
             Copy-Item "windows/README.md"           "$d/README.txt"
             Copy-Item "windows/LICENSE"             "$d/LICENSE.txt"
             $zip = "dist/LarzOS-WSL-$V-$($a.arch).zip"
