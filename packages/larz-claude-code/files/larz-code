@@ -42,6 +42,13 @@ EOF
 
 ensure_claude
 
+# Claude Code tracks a recent Node. Debian stable can lag; warn, don't block.
+NODE_MAJOR="$(node -p 'process.versions.node.split(".")[0]' 2>/dev/null || echo 0)"
+if [ "${NODE_MAJOR:-0}" -lt 20 ] 2>/dev/null; then
+  echo "larz-code: Node $NODE_MAJOR is too old for Claude Code." >&2
+  echo "  Install a newer one, e.g.:  larz apt install -t trixie-backports nodejs" >&2
+fi
+
 BASE_URL="$(_tomlval base_url || true)"
 AUTH_TOKEN="$(_tomlval auth_token || true)"
 if [ -n "${BASE_URL:-}" ] && [ -n "${AUTH_TOKEN:-}" ]; then
