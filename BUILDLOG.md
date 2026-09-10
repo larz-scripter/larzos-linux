@@ -2,24 +2,34 @@
 
 Newest first. Mirrored to <https://larzos.com/larzos-linux/>.
 
-## 2026-09-10 - LarzOS.exe, the double-click Windows installer
+## 2026-09-10 - LarzOS as its own Windows app (LarzOS.exe + MSIX)
 
 - `windows/` is a fork of Microsoft's `WSL-DistroLauncher` (MIT), rebranded to
-  LarzOS: distro name `LarzOS`, output **`LarzOS.exe`**, app execution alias
-  `larzos.exe`, LarzOS icon + Start-menu tiles, all strings and URLs ours, and
-  the "enter a UNIX username" prompt removed — the rootfs already ships `larz`
-  at uid 1000, so the launcher just marks it the default.
-- `.github/workflows/windows.yml` compiles `LarzOS.exe` (x64 + ARM64) on every
-  push that touches `windows/` — plain "Desktop development with C++", no UWP
-  workload. `release.yml` gains a `windows-launcher` job that, on a tag, bundles
-  each `LarzOS.exe` with its rootfs as `install.tar.gz` into
-  `LarzOS-WSL-<ver>-{x64,arm64}.zip` and attaches it to the release. Extract,
-  run `LarzOS.exe`, LarzOS registers itself in WSL.
-- `DistroLauncher-Appx/` (MSIX for a Microsoft Store listing) is vendored and
-  rebranded but **not built in CI yet** — it needs the UWP workload + a signing
-  cert. Store submission stays a roadmap item; the `.wsl` file and `LarzOS.exe`
-  are the supported installers.
-- Not yet built or run on a real Windows machine — CI green is the current bar.
+  LarzOS: distro name `LarzOS`, output **`LarzOS.exe`**, execution alias
+  `larzos.exe`, LarzOS icon + Start tiles + `#0B1020` colour, all strings and
+  URLs ours, the "enter a UNIX username" prompt removed (rootfs ships `larz`
+  uid 1000).
+- **Works with no WSL installed, fully offline.** On first run `LarzOS.exe`
+  turns the Windows Linux engine on itself: elevated DISM enables Virtual
+  Machine Platform (in-box, no network) and `msiexec` installs the WSL runtime
+  from a **`wsl.msi` bundled in the download** (Microsoft's WSL is MIT);
+  `wsl --install` is only the backstop when nothing is bundled. Then it drops a
+  **LarzOS shortcut on the desktop**, sets a RunOnce to reopen once after
+  sign-in, and asks for one restart. Every launch after that is instant.
+- Two installers, both offline: `LarzOS_<ver>_x64.msix` (LarzOS as an installed
+  app — Start tile, icon; self-signed + `LarzOS.cer` until it's Store-listed)
+  and `LarzOS-WSL-<ver>-{x64,arm64}.zip` (loose `LarzOS.exe` + rootfs +
+  `wsl.msi`). `larzos-<ver>.wsl` stays for `wsl --install --from-file`.
+- CI: `windows.yml` (`windows-launcher-ci`, on `windows-2022`) builds
+  `LarzOS.exe` (x64 + ARM64) **and** the signed MSIX on every push touching
+  `windows/` — both green. `release.yml` `windows-launcher` fetches
+  `microsoft/WSL`'s MIT MSI, bundles it, and attaches the zips + `.msix` +
+  `.cer` on a tag.
+- Unavoidable prerequisites: 64-bit Windows 10 2004+/11, BIOS virtualization on,
+  admin + one restart for that first setup.
+- **Compiles in CI; never built or run on a real Windows machine** — the
+  elevation / DISM / MSI / reboot-resume / desktop-shortcut path needs
+  on-device testing.
 
 ## 2026-09-10 - LarzOS as a first-class WSL distribution
 

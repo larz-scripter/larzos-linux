@@ -50,11 +50,15 @@ base that boots on today's hardware.
       (branded name/icon/OOBE/terminal profile)
 - [ ] LarzOS phone app — run the OS in a proot userland, Termux-free (scaffold at
       larz-scripter/larzos-app; CI builds an APK, not device-tested)
-- [x] `LarzOS.exe` — double-click WSL installer (rebranded `WSL-DistroLauncher`
-      in `windows/`; CI compiles it and bundles it with the rootfs on release;
-      not yet run on real Windows)
-- [ ] MSIX + Microsoft Store listing (`windows/DistroLauncher-Appx/` is
-      rebranded; needs the UWP toolchain in CI + a signing cert)
+- [x] LarzOS as its own Windows app — `LarzOS.exe` + self-signed MSIX
+      (`windows/`, rebranded `WSL-DistroLauncher`). Sets up the Linux engine
+      itself on first run, fully offline (bundles Microsoft's MIT `wsl.msi`),
+      drops a desktop icon. CI builds both; not yet run on real Windows.
+- [ ] on-device Windows test of the first-run elevation / DISM / reboot path
+- [ ] Microsoft Store listing (removes the self-signed cert step; needs a
+      Partner Center account)
+- [ ] "LarzOS Platform" — fork the now-MIT `microsoft/WSL` into a rebranded
+      runtime so LarzOS isn't the system WSL and isn't in `wsl -l`
 - [ ] `larz-aid`: real local model execution (ollama/llama.cpp wrapper)
 - [ ] Gateway: an Anthropic-compatible `/v1/messages` proxy so `larz code`
       can route through it
