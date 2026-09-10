@@ -79,7 +79,7 @@ jobs:
           V="${GITHUB_REF_NAME#v}"
           sudo ARCH=arm64 OUT="dist/larzos-rootfs-arm64-$V.tar.gz" \
             LARZOS_APT_BASE=https://larzos.com/apt sh tools/build-rootfs.sh
-          sudo chown "$USER" dist/*.tar.gz
+          sudo chown -R "$USER" dist
           (cd dist && sha256sum larzos-rootfs-arm64-$V.tar.gz > larzos-rootfs-arm64-$V.tar.gz.sha256)
           ls -la dist/
 
