@@ -93,3 +93,54 @@ jobs:
           files: |
             dist/larzos-rootfs-arm64-*.tar.gz
             dist/larzos-rootfs-arm64-*.sha256
+
+  # The double-click Windows installer: LarzOS.exe (the rebranded WSL
+  # distro-launcher, windows/) bundled with the rootfs as install.tar.gz.
+  # Extract the zip, run LarzOS.exe, and LarzOS registers itself in WSL.
+  # Needs both rootfs jobs so the x64 and arm64 tarballs are on the release.
+  windows-launcher:
+    needs: [publish, rootfs-arm64]
+    if: startsWith(github.ref, 'refs/tags/')
+    runs-on: windows-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Add MSBuild to PATH
+        uses: microsoft/setup-msbuild@v2
+
+      - name: Build LarzOS.exe (x64 + ARM64, Release)
+        shell: cmd
+        run: |
+          msbuild windows\DistroLauncher\LarzOS.vcxproj /p:Configuration=Release /p:Platform=x64 /p:OutDir=%CD%\build\x64\ /m /nologo || exit /b 1
+          msbuild windows\DistroLauncher\LarzOS.vcxproj /p:Configuration=Release /p:Platform=ARM64 /p:OutDir=%CD%\build\arm64\ /m /nologo || exit /b 1
+
+      - name: Bundle each LarzOS.exe with its rootfs
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $V = "${{ github.ref_name }}" -replace '^v',''
+          gh release download "${{ github.ref_name }}" --pattern "larzos-rootfs-amd64-*.tar.gz" --output rootfs-x64.tar.gz
+          gh release download "${{ github.ref_name }}" --pattern "larzos-rootfs-arm64-*.tar.gz" --output rootfs-arm64.tar.gz
+          New-Item -ItemType Directory -Force dist | Out-Null
+          foreach ($a in @(@{arch='x64'}, @{arch='arm64'})) {
+            $d = "pkg-$($a.arch)"
+            New-Item -ItemType Directory -Force $d | Out-Null
+            Copy-Item "build/$($a.arch)/LarzOS.exe" "$d/LarzOS.exe"
+            Copy-Item "rootfs-$($a.arch).tar.gz"    "$d/install.tar.gz"
+            Copy-Item "windows/README.md"           "$d/README.txt"
+            Copy-Item "windows/LICENSE"             "$d/LICENSE.txt"
+            $zip = "dist/LarzOS-WSL-$V-$($a.arch).zip"
+            Compress-Archive -Path "$d/*" -DestinationPath $zip -Force
+            (Get-FileHash $zip -Algorithm SHA256).Hash.ToLower() + "  " + (Split-Path $zip -Leaf) | Out-File -Append -Encoding ascii "dist/LarzOS-WSL-$V.sha256"
+          }
+          Get-ChildItem dist
+
+      - name: Attach the Windows installer to the release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            dist/LarzOS-WSL-*.zip
+            dist/LarzOS-WSL-*.sha256

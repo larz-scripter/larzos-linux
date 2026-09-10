@@ -1,0 +1,46 @@
+name: windows-launcher
+
+# Compile-check for the LarzOS WSL launcher (windows/). The real release
+# artifact - LarzOS.exe bundled with the rootfs - is built by release.yml on a
+# tag. This job just proves the C++ still compiles on every push that touches it.
+
+on:
+  push:
+    paths: ["windows/**", ".github/workflows/windows.yml"]
+  pull_request:
+    paths: ["windows/**", ".github/workflows/windows.yml"]
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Add MSBuild to PATH
+        uses: microsoft/setup-msbuild@v2
+
+      - name: Build LarzOS.exe (x64, Release)
+        shell: cmd
+        run: >
+          msbuild windows\DistroLauncher\LarzOS.vcxproj
+          /p:Configuration=Release /p:Platform=x64
+          /p:OutDir=%CD%\build\x64\ /m /nologo
+
+      - name: Build LarzOS.exe (ARM64, Release)
+        shell: cmd
+        run: >
+          msbuild windows\DistroLauncher\LarzOS.vcxproj
+          /p:Configuration=Release /p:Platform=ARM64
+          /p:OutDir=%CD%\build\arm64\ /m /nologo
+
+      - name: Show output
+        shell: pwsh
+        run: Get-ChildItem -Recurse build | Select-Object FullName, Length
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: LarzOS-exe
+          path: |
+            build/x64/LarzOS.exe
+            build/arm64/LarzOS.exe

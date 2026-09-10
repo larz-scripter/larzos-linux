@@ -67,8 +67,13 @@ wsl --install --from-file larzos-0.1.8.wsl     # WSL 2.4.4+
 It registers as **LarzOS**, drops you in as the `larz` user (`larzsh` shell,
 passwordless sudo), and `larz`, `larz-system`, `larz code` (Claude Code) and
 `apt` all work. `larz apply` converges packages and files; systemd services run
-(WSL runs systemd). Classic path:
-`wsl --import LarzOS C:\LarzOS larzos-rootfs-amd64-<ver>.tar.gz`.
+(WSL runs systemd).
+
+Prefer a double-click installer? Grab `LarzOS-WSL-<ver>-x64.zip` from the same
+release, extract it, and run **`LarzOS.exe`** — it registers LarzOS from the
+bundled rootfs and opens a shell. Classic path (any WSL version):
+`wsl --import LarzOS C:\LarzOS larzos-rootfs-amd64-<ver>.tar.gz`. See
+[`windows/`](windows/) for all three and the launcher source.
 
 ## Try it in a container
 
@@ -103,6 +108,7 @@ lib/larzos/modules/    hostname, locale, users, packages, services, audio, ai
 examples/              reference machine specs (desktop, server)
 packages/              the distro's own packages (larz-desktop, larz-ai, larzsh,
                        larz-claude-code — `larz code`, Claude Code preinstalled)
+windows/               LarzOS.exe — the rebranded WSL distro-launcher + MSIX
 docs/                  design notes and the system.lz schema
 ```
 

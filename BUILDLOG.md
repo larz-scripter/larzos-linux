@@ -2,6 +2,25 @@
 
 Newest first. Mirrored to <https://larzos.com/larzos-linux/>.
 
+## 2026-09-10 - LarzOS.exe, the double-click Windows installer
+
+- `windows/` is a fork of Microsoft's `WSL-DistroLauncher` (MIT), rebranded to
+  LarzOS: distro name `LarzOS`, output **`LarzOS.exe`**, app execution alias
+  `larzos.exe`, LarzOS icon + Start-menu tiles, all strings and URLs ours, and
+  the "enter a UNIX username" prompt removed — the rootfs already ships `larz`
+  at uid 1000, so the launcher just marks it the default.
+- `.github/workflows/windows.yml` compiles `LarzOS.exe` (x64 + ARM64) on every
+  push that touches `windows/` — plain "Desktop development with C++", no UWP
+  workload. `release.yml` gains a `windows-launcher` job that, on a tag, bundles
+  each `LarzOS.exe` with its rootfs as `install.tar.gz` into
+  `LarzOS-WSL-<ver>-{x64,arm64}.zip` and attaches it to the release. Extract,
+  run `LarzOS.exe`, LarzOS registers itself in WSL.
+- `DistroLauncher-Appx/` (MSIX for a Microsoft Store listing) is vendored and
+  rebranded but **not built in CI yet** — it needs the UWP workload + a signing
+  cert. Store submission stays a roadmap item; the `.wsl` file and `LarzOS.exe`
+  are the supported installers.
+- Not yet built or run on a real Windows machine — CI green is the current bar.
+
 ## 2026-09-10 - LarzOS as a first-class WSL distribution
 
 - The rootfs now carries `/etc/wsl-distribution.conf`, so it is a branded WSL
@@ -14,9 +33,7 @@ Newest first. Mirrored to <https://larzos.com/larzos-linux/>.
   the manifest) alongside the plain tarball.
 - `build-rootfs.sh` gained `LARZOS_CLAUDE=0` to build without the ~450 MB
   node + Claude Code layer (for a lean phone/base image).
-- Still to do: a `LarzOS.exe` / MSIX distro-launcher (Microsoft's
-  `WSL-DistroLauncher`, MIT) for a double-click install and a Microsoft Store
-  listing.
+- Done next: `LarzOS.exe`, the double-click installer (see the entry above).
 
 ## 2026-09-10 - Claude Code, preinstalled
 

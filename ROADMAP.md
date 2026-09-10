@@ -50,7 +50,11 @@ base that boots on today's hardware.
       (branded name/icon/OOBE/terminal profile)
 - [ ] LarzOS phone app — run the OS in a proot userland, Termux-free (scaffold at
       larz-scripter/larzos-app; CI builds an APK, not device-tested)
-- [ ] `LarzOS.exe` / MSIX WSL distro-launcher + Microsoft Store listing
+- [x] `LarzOS.exe` — double-click WSL installer (rebranded `WSL-DistroLauncher`
+      in `windows/`; CI compiles it and bundles it with the rootfs on release;
+      not yet run on real Windows)
+- [ ] MSIX + Microsoft Store listing (`windows/DistroLauncher-Appx/` is
+      rebranded; needs the UWP toolchain in CI + a signing cert)
 - [ ] `larz-aid`: real local model execution (ollama/llama.cpp wrapper)
 - [ ] Gateway: an Anthropic-compatible `/v1/messages` proxy so `larz code`
       can route through it
