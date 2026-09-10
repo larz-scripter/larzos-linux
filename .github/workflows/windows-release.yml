@@ -129,13 +129,18 @@ jobs:
             if (Test-Path "inputs/wsl-$($a.arch).msi") { Copy-Item "inputs/wsl-$($a.arch).msi" "$d/wsl.msi" }
             Copy-Item "windows/README.md"               "$d/README.txt"
             Copy-Item "windows/LICENSE"                 "$d/LICENSE.txt"
-            $zip = "dist/LarzOS-WSL-$V-$($a.arch).zip"
-            Compress-Archive -Path "$d/*" -DestinationPath $zip -Force
+            $zip = "$PWD\dist\LarzOS-WSL-$V-$($a.arch).zip"
+            # 7-Zip - Compress-Archive is unreliable past a few hundred MB and
+            # these bundles carry the rootfs + the ~260 MB WSL runtime.
+            & 'C:\Program Files\7-Zip\7z.exe' a -tzip -bd -mx=5 "$zip" ".\$d\*"
+            if ($LASTEXITCODE -ne 0) { throw "packing $zip failed ($LASTEXITCODE)" }
+            if (-not (Test-Path $zip)) { throw "$zip was not created" }
           }
-          Get-ChildItem dist -File | ForEach-Object {
-            (Get-FileHash $_.FullName -Algorithm SHA256).Hash.ToLower() + "  " + $_.Name
-          } | Out-File -Encoding ascii "dist/LarzOS-windows-$V.sha256"
-          Get-ChildItem dist
+          $lines = Get-ChildItem dist -File -Filter 'LarzOS*' | Sort-Object Name | ForEach-Object {
+            (Get-FileHash -LiteralPath $_.FullName -Algorithm SHA256).Hash.ToLower() + "  " + $_.Name
+          }
+          Set-Content -Encoding ascii "dist/LarzOS-windows-$V.sha256" $lines
+          Get-ChildItem dist -File | Select-Object Name, Length
 
       - name: Upload the Windows installers to the release
         shell: pwsh
@@ -143,4 +148,10 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           TAG: ${{ inputs.tag }}
         run: |
-          gh release upload "$env:TAG" (Get-ChildItem dist\* | ForEach-Object FullName) --clobber
+          $ErrorActionPreference = 'Stop'
+          $files = Get-ChildItem dist -File -Include 'LarzOS-WSL-*.zip','LarzOS_*.msix','LarzOS.cer','LarzOS-windows-*.sha256' -Recurse |
+                   ForEach-Object FullName
+          if (-not $files) { throw "nothing in dist to upload" }
+          $files
+          gh release upload "$env:TAG" @files --clobber
+          if ($LASTEXITCODE -ne 0) { throw "release upload failed" }
