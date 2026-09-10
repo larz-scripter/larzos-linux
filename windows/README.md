@@ -1,29 +1,38 @@
 # LarzOS on Windows
 
-Two ways to get LarzOS running under WSL. Both give you the same thing: a
-distribution that registers as **LarzOS**, drops you in as the `larz` user
-(`larzsh` shell, passwordless sudo), with `larz`, `larz-system`, `larz code`
-(Claude Code) and `apt` all working.
+LarzOS runs on Windows as **its own app** — its own icon, its own Start-menu
+entry, its own Windows Terminal profile. You click it and you're in LarzOS. It
+uses the Windows Linux engine (the same one Ubuntu, Debian and Kali use on
+Windows) underneath, but nothing in the UI says "WSL".
 
-Requires Windows 10 21H2+ / Windows 11 with WSL installed (`wsl --install` once,
-reboot). WSL 2 recommended.
+One prerequisite, one time: the Windows Linux engine must be turned on. Most
+Windows 11 machines already have it. If not, LarzOS tells you to run
+`wsl --install --no-distribution` in an admin PowerShell and reboot — after that
+you never touch it again. (There is no way to give a real Linux environment on
+Windows without this component or a full virtual machine.)
 
-## 1. The `.wsl` file (one command, no download of this launcher)
+## 1. `LarzOS` — the installed app (recommended)
 
-```powershell
-wsl --install --from-file larzos-<ver>.wsl        # WSL 2.4.4+
-```
+Download **`LarzOS_<ver>_x64.msix`** + **`LarzOS.cer`** from the
+[latest release](https://github.com/larz-scripter/larzos-linux/releases/latest).
 
-`larzos-<ver>.wsl` is on the [latest release](https://github.com/larz-scripter/larzos-linux/releases/latest).
-This uses the branded name, icon, first-run and Windows Terminal profile baked
-into the rootfs (`/etc/wsl-distribution.conf`).
+1. Double-click `LarzOS.cer` → *Install Certificate* → *Local Machine* →
+   *Place all certificates in the following store* → *Trusted People*. (One time;
+   this is only needed until LarzOS is in the Microsoft Store.)
+2. Double-click `LarzOS_<ver>_x64.msix` → *Install*.
 
-## 2. `LarzOS.exe` (double-click installer)
+**LarzOS** is now in your Start menu with the LarzOS icon. Click it → first
+launch unpacks (about a minute), then a LarzOS shell opens as the `larz` user.
+Every launch after that is instant. Windows Terminal gets a **LarzOS** profile
+automatically.
 
-Download **`LarzOS-WSL-<ver>-x64.zip`** (or `-arm64`) from the release, extract
-it anywhere, and run **`LarzOS.exe`**. It registers LarzOS from the bundled
-`install.tar.gz`, sets `larz` as the default user, and opens a shell. Run it
-again any time to get a LarzOS shell; `wsl -d LarzOS` works too.
+## 2. `LarzOS.exe` — the loose version (no install step)
+
+Download **`LarzOS-WSL-<ver>-x64.zip`**, extract it anywhere, run **`LarzOS.exe`**.
+First run registers LarzOS and opens a shell; run it again any time for a shell.
+The zip is just `LarzOS.exe` + `install.tar.gz` — keep them together. Windows
+SmartScreen shows an "unknown publisher" notice on the first run (*More info →
+Run anyway*); that goes away once LarzOS is Store-signed.
 
 ```
 LarzOS.exe                     install if needed, then open a shell
@@ -32,55 +41,55 @@ LarzOS.exe run <command>       run a command inside LarzOS
 LarzOS.exe config --default-user <name>
 ```
 
-The zip is just `LarzOS.exe` + `install.tar.gz`. Keep them together.
-
-## 3. Classic import (any WSL version)
+## 3. `.wsl` file — one command, for people who use `wsl` directly
 
 ```powershell
-wsl --import LarzOS C:\LarzOS larzos-rootfs-amd64-<ver>.tar.gz
-wsl -d LarzOS
+wsl --install --from-file larzos-<ver>.wsl        # WSL 2.4.4+
 ```
 
-Default user is `root` with this path; `LarzOS.exe config --default-user larz`
-(or edit `/etc/wsl.conf`) to switch.
+Same branded result (name, icon, first-run, terminal profile are baked into the
+rootfs), registered through the `wsl` CLI. Classic import for older WSL:
+`wsl --import LarzOS C:\LarzOS larzos-rootfs-amd64-<ver>.tar.gz`.
 
 ---
 
 ## What's in this directory
 
 A fork of Microsoft's [WSL-DistroLauncher](https://github.com/microsoft/WSL-DistroLauncher)
-reference implementation (MIT — see `LICENSE`), rebranded for LarzOS:
+reference implementation (MIT — see `LICENSE`), rebranded for LarzOS. This is the
+same mechanism the first-party Ubuntu/Debian/Kali Windows apps are built on.
 
 | Path | What it is |
 |---|---|
-| `DistroLauncher/` | the `LarzOS.exe` console launcher (plain Win32 + `wslapi.dll`) |
-| `DistroLauncher-Appx/` | MSIX packaging project for a Microsoft Store listing |
+| `DistroLauncher/` | `LarzOS.exe` — the console launcher (plain Win32 + `wslapi.dll`) |
+| `DistroLauncher-Appx/` | the MSIX packaging project — makes `LarzOS.exe` an installed app |
 | `LarzOS.sln` | both projects, for Visual Studio |
-| `build.ps1` | local build helper |
+| `build.ps1` | local build helper (`-Appx` also builds the MSIX) |
 
 Changes from upstream: distro name `LarzOS`, output `LarzOS.exe`, app execution
-alias `larzos.exe`, LarzOS icon and tiles, all user-facing strings and URLs, and
-the username prompt removed — the rootfs already ships `larz` at uid 1000, so the
-launcher just marks it the default.
+alias `larzos.exe`, LarzOS icon + tiles, `#0B1020` splash/tile colour, all
+user-facing strings and URLs, the "enter a UNIX username" prompt removed (the
+rootfs ships `larz` at uid 1000, so the launcher just marks it the default), and
+a LarzOS-worded message when the Windows Linux engine is off.
 
 ## Building
 
-`LarzOS.exe` builds with **Visual Studio 2022 + "Desktop development with C++"**
-and a Windows SDK — no UWP workload needed:
+`LarzOS.exe` alone builds with **Visual Studio 2022 + "Desktop development with
+C++"** and a Windows SDK:
 
 ```powershell
 .\build.ps1                      # -> build\x64\LarzOS.exe
+.\build.ps1 -Appx                # also the MSIX (needs the UWP workload)
 ```
 
-CI builds it on every push that touches `windows/` (`.github/workflows/windows.yml`)
-and, on a tagged release, bundles it with the rootfs into `LarzOS-WSL-<ver>-*.zip`
-(`.github/workflows/release.yml`, `windows-launcher` job).
+CI (`.github/workflows/windows.yml`) builds both `LarzOS.exe` (x64 + ARM64) and
+the signed MSIX on every push touching `windows/`. On a tagged release,
+`release.yml` bundles `LarzOS.exe` with the rootfs into `LarzOS-WSL-<ver>-*.zip`
+and attaches the `.msix` + `.cer`.
 
-### MSIX / Microsoft Store
+### Microsoft Store
 
-`DistroLauncher-Appx/` produces an `.msixbundle` for a Store submission. It needs
-the **"Universal Windows Platform development"** workload and a signing
-certificate whose subject matches `Publisher="CN=Larz Scripter"` in
-`MyDistro.appxmanifest`. This path is **not built or verified in CI yet** — it is
-here for the eventual Store listing (see the repo `ROADMAP.md`). The `.wsl` file
-and `LarzOS.exe` above are the supported installers today.
+The MSIX is currently **self-signed** (hence the certificate step above). A Store
+listing — clean double-click install, no certificate, auto-updates — needs a
+Microsoft Partner Center account and a submission; that is tracked in the repo
+`ROADMAP.md`.
