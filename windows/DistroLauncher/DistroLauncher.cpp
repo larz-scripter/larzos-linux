@@ -25,6 +25,107 @@ WslApiLoader g_wslApi(DistributionInfo::Name);
 static HRESULT InstallDistribution(bool createUser);
 static HRESULT SetDefaultUser(std::wstring_view userName);
 
+// --- First-run engine setup ------------------------------------------------
+//
+// LarzOS is meant to work on a PC that has never had WSL. The Linux engine is
+// a Windows component (Virtual Machine Platform + the WSL runtime); it can't be
+// bundled outright, but LarzOS can turn it on itself: `wsl.exe --install` (a
+// system stub on every Windows 10 2004+/11) self-elevates, enables the feature
+// and installs the runtime in one step. A `wsl.msi` shipped next to LarzOS.exe
+// is the offline fallback. Either way the machine needs one reboot the first
+// time, after which every LarzOS launch is instant.
+
+enum class EngineState { Present, JustEnabled, NeedsReboot, Failed };
+
+static std::wstring ExeDir()
+{
+    wchar_t buf[MAX_PATH] = {};
+    GetModuleFileNameW(nullptr, buf, ARRAYSIZE(buf));
+    std::wstring path(buf);
+    const auto slash = path.find_last_of(L"\\/");
+    return (slash == std::wstring::npos) ? L"." : path.substr(0, slash);
+}
+
+static bool RunAndWait(const std::wstring& commandLine, DWORD* exitCode)
+{
+    STARTUPINFOW si = { sizeof(si) };
+    PROCESS_INFORMATION pi = {};
+    std::wstring mutableCmd = commandLine;
+    if (!CreateProcessW(nullptr, mutableCmd.data(), nullptr, nullptr, FALSE,
+                        0, nullptr, nullptr, &si, &pi)) {
+        return false;
+    }
+    WaitForSingleObject(pi.hProcess, INFINITE);
+    if (exitCode != nullptr) {
+        GetExitCodeProcess(pi.hProcess, exitCode);
+    }
+    CloseHandle(pi.hThread);
+    CloseHandle(pi.hProcess);
+    return true;
+}
+
+static bool EnginePresent()
+{
+    WslApiLoader probe(DistributionInfo::Name);
+    return probe.WslIsOptionalComponentInstalled() != FALSE;
+}
+
+static EngineState EnsureEngine()
+{
+    if (EnginePresent()) {
+        return EngineState::Present;
+    }
+
+    Helpers::PrintMessage(MSG_ENGINE_SETUP_STARTING);
+
+    // 1. Windows' own bootstrapper. Self-elevates; enables Virtual Machine
+    //    Platform and installs the WSL runtime.
+    DWORD ec = 1;
+    bool anyStepRan = RunAndWait(L"wsl.exe --install --no-distribution", &ec);
+
+    // 2. Offline fallback: the runtime MSI + feature enable, both elevated.
+    if (!EnginePresent()) {
+        const std::wstring msi = ExeDir() + L"\\wsl.msi";
+        if (GetFileAttributesW(msi.c_str()) != INVALID_FILE_ATTRIBUTES) {
+            anyStepRan |= RunAndWait(
+                L"powershell.exe -NoProfile -ExecutionPolicy Bypass -Command "
+                L"\"Start-Process msiexec.exe -Verb RunAs -Wait "
+                L"-ArgumentList '/i',(Resolve-Path '" + msi + L"'),'/passive'\"", &ec);
+            anyStepRan |= RunAndWait(
+                L"powershell.exe -NoProfile -ExecutionPolicy Bypass -Command "
+                L"\"Start-Process dism.exe -Verb RunAs -Wait -ArgumentList "
+                L"'/online','/enable-feature','/featurename:VirtualMachinePlatform','/all','/norestart'\"", &ec);
+        }
+    }
+
+    if (EnginePresent()) {
+        return EngineState::JustEnabled;   // rare: no reboot needed
+    }
+    if (!anyStepRan) {
+        return EngineState::Failed;        // couldn't even start a setup step
+    }
+    // A setup step ran; the feature is enabled but needs a reboot to load.
+    return EngineState::NeedsReboot;
+}
+
+// Relaunch a fresh copy of this exe (so a newly-present wslapi.dll is loaded)
+// and let it take over. Fire and forget - this process then exits.
+static void RelaunchSelf()
+{
+    wchar_t self[MAX_PATH] = {};
+    GetModuleFileNameW(nullptr, self, ARRAYSIZE(self));
+    std::wstring cmd = L"\"";
+    cmd += self;
+    cmd += L"\"";
+    STARTUPINFOW si = { sizeof(si) };
+    PROCESS_INFORMATION pi = {};
+    if (CreateProcessW(nullptr, cmd.data(), nullptr, nullptr, FALSE,
+                       CREATE_NEW_CONSOLE, nullptr, nullptr, &si, &pi)) {
+        CloseHandle(pi.hThread);
+        CloseHandle(pi.hProcess);
+    }
+}
+
 HRESULT InstallDistribution(bool createUser)
 {
     // Register the distribution from install.tar.gz next to this executable.
@@ -83,15 +184,29 @@ int wmain(int argc, wchar_t const *argv[])
         arguments.push_back(argv[index]);
     }
 
-    // Ensure the Windows Linux engine (the "WSL" optional component) is enabled.
+    // Ensure the Windows Linux engine is present, setting it up on first run.
     DWORD exitCode = 1;
     if (!g_wslApi.WslIsOptionalComponentInstalled()) {
-        Helpers::PrintMessage(MSG_MISSING_WSL_COMPONENT);
-        if (arguments.empty()) {
-            Helpers::PromptForInput();
+        switch (EnsureEngine()) {
+        case EngineState::Present:        // stale global; a fresh process sees it
+        case EngineState::JustEnabled:
+            Helpers::PrintMessage(MSG_ENGINE_READY_RELAUNCH);
+            RelaunchSelf();
+            return 0;
+        case EngineState::NeedsReboot:
+            Helpers::PrintMessage(MSG_ENGINE_SETUP_REBOOT);
+            if (arguments.empty()) {
+                Helpers::PromptForInput();
+            }
+            return 0;
+        case EngineState::Failed:
+        default:
+            Helpers::PrintMessage(MSG_ENGINE_SETUP_FAILED);
+            if (arguments.empty()) {
+                Helpers::PromptForInput();
+            }
+            return exitCode;
         }
-
-        return exitCode;
     }
 
     // Install the distribution if it is not already.

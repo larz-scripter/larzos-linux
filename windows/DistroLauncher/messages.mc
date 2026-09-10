@@ -87,14 +87,30 @@ Enable the "Virtual Machine Platform" Windows feature and turn on virtualization
 in your BIOS, then try again. Guide: https://larzos.com/larzos-linux/
 .
 
-MessageId=1015 SymbolicName=MSG_MISSING_WSL_COMPONENT
+MessageId=1015 SymbolicName=MSG_ENGINE_SETUP_STARTING
 Language=English
-LarzOS needs the Windows Linux engine, which is off on this PC.
+First run: LarzOS is setting up the Windows Linux engine. This happens once.
+Windows will ask for permission - choose Yes.
+.
 
-Open PowerShell as Administrator and run:
+MessageId=1016 SymbolicName=MSG_ENGINE_SETUP_REBOOT
+Language=English
+The Linux engine is installed. Restart Windows to finish, then open LarzOS
+again - it will pick up where it left off.
+.
+
+MessageId=1017 SymbolicName=MSG_ENGINE_SETUP_FAILED
+Language=English
+LarzOS could not set up the Linux engine automatically. Open PowerShell as
+Administrator, run:
 
     wsl --install --no-distribution
 
-then reboot and start LarzOS again. (This is a one-time Windows setup; you won't
-need to touch it after that.)
+restart Windows, then open LarzOS again. Your PC also needs 64-bit Windows 10
+(2004+) or Windows 11 with CPU virtualization enabled in the BIOS.
+.
+
+MessageId=1018 SymbolicName=MSG_ENGINE_READY_RELAUNCH
+Language=English
+The Linux engine is ready. Starting LarzOS...
 .
