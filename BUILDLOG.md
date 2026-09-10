@@ -2,6 +2,22 @@
 
 Newest first. Mirrored to <https://larzos.com/larzos-linux/>.
 
+## 2026-09-10 - LarzOS as a first-class WSL distribution
+
+- The rootfs now carries `/etc/wsl-distribution.conf`, so it is a branded WSL
+  distro, not just an importable tarball. `wsl --install --from-file
+  larzos-<ver>.wsl` (WSL 2.4.4+) registers it as **LarzOS** with the LarzOS
+  icon (`larz-branding` ships `larzos.ico`), a λ first-run (`wsl-oobe.sh`), a
+  Start-menu shortcut, and a LarzOS Windows Terminal profile + colour scheme.
+  Default user `larz` (uid 1000).
+- `release.yml` publishes `larzos-<ver>.wsl` (= the amd64 rootfs, which contains
+  the manifest) alongside the plain tarball.
+- `build-rootfs.sh` gained `LARZOS_CLAUDE=0` to build without the ~450 MB
+  node + Claude Code layer (for a lean phone/base image).
+- Still to do: a `LarzOS.exe` / MSIX distro-launcher (Microsoft's
+  `WSL-DistroLauncher`, MIT) for a double-click install and a Microsoft Store
+  listing.
+
 ## 2026-09-10 - Claude Code, preinstalled
 
 - **`larz code`.** New package `larz-claude-code` puts Anthropic's terminal

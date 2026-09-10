@@ -31,6 +31,7 @@ pkg.package({
     "install -Dm644 files/brand/dpkg-origin-larzos $DESTDIR/usr/share/larzos/branding/dpkg-origin-larzos",
     "install -Dm644 files/art/larzos.svg      $DESTDIR/usr/share/larzos/branding/larzos.svg",
     "install -Dm644 files/art/larzos.png      $DESTDIR/usr/share/larzos/branding/larzos.png",
+    "install -Dm644 files/art/larzos.ico      $DESTDIR/usr/share/larzos/branding/larzos.ico",
     "install -Dm644 files/plymouth/larzos.plymouth $DESTDIR/usr/share/larzos/branding/plymouth/larzos.plymouth",
     "install -Dm644 files/plymouth/larzos.script   $DESTDIR/usr/share/larzos/branding/plymouth/larzos.script",
     "install -Dm644 files/plymouth/logo.png        $DESTDIR/usr/share/larzos/branding/plymouth/logo.png",

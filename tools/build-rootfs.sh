@@ -11,10 +11,12 @@
 # Run on a Debian/Ubuntu host as root.
 #
 #   OUT=dist/larzos-rootfs-amd64.tar.gz sh tools/build-rootfs.sh
+#   LARZOS_CLAUDE=0 ...                    # skip the ~450MB node + Claude Code layer
 #
-# Then, on Windows:
-#   wsl --import LarzOS C:\LarzOS larzos-rootfs-amd64.tar.gz
-#   wsl -d LarzOS
+# Then, on Windows (WSL 2.4.4+):
+#   wsl --install --from-file larzos-<ver>.wsl      # branded: icon, OOBE, terminal profile
+# or the classic way:
+#   wsl --import LarzOS C:\LarzOS larzos-rootfs-amd64.tar.gz && wsl -d LarzOS
 set -eu
 
 SUITE="${SUITE:-trixie}"
@@ -63,18 +65,95 @@ generateHosts=true
 generateResolvConf=true
 EOF
 
+# --- LarzOS as a first-class WSL distribution -------------------------------
+# /etc/wsl-distribution.conf makes `wsl --install --from-file larzos-<ver>.wsl`
+# register this as "LarzOS" with the LarzOS icon, a branded first-run, a Start
+# menu shortcut and a Windows Terminal profile. (WSL 2.4.4+.)
+mkdir -p "$ROOT/usr/lib/larzos"
+
+cat > "$ROOT/etc/wsl-distribution.conf" <<'EOF'
+[oobe]
+command = /usr/lib/larzos/wsl-oobe.sh
+defaultUid = 1000
+defaultName = LarzOS
+
+[shortcut]
+enabled = true
+icon = /usr/lib/larzos/larzos.ico
+
+[windowsterminal]
+enabled = true
+profileTemplate = /usr/lib/larzos/terminal-profile.json
+EOF
+
+cat > "$ROOT/usr/lib/larzos/wsl-oobe.sh" <<'EOF'
+#!/bin/sh
+# LarzOS — WSL first run. Runs once, as root; must exit 0.
+set -e
+C='\033[1;36m'; R='\033[0m'
+printf '\n'
+[ -x /etc/update-motd.d/00-larzos ] && /etc/update-motd.d/00-larzos 2>/dev/null || printf "  ${C}λ  LarzOS${R}\n"
+printf '\n'
+printf "  You are the ${C}larz${R} user — passwordless sudo, ${C}larzsh${R} as your shell.\n"
+printf "  One command runs the machine:  ${C}larz${R}   (try ${C}larz doctor${R}, ${C}larz code${R})\n"
+printf "  Your whole system is ${C}/etc/larzos/system.lz${R} — edit it, then ${C}sudo larz apply${R}.\n"
+printf '\n'
+exit 0
+EOF
+chmod 0755 "$ROOT/usr/lib/larzos/wsl-oobe.sh"
+
+cat > "$ROOT/usr/lib/larzos/terminal-profile.json" <<'EOF'
+{
+  "profiles": [
+    {
+      "name": "LarzOS",
+      "colorScheme": "LarzOS",
+      "font": { "face": "Cascadia Mono" },
+      "cursorShape": "bar"
+    }
+  ],
+  "schemes": [
+    {
+      "name": "LarzOS",
+      "background": "#0B1020", "foreground": "#E8EEF7",
+      "cursorColor": "#22D3EE", "selectionBackground": "#22D3EE",
+      "black": "#131A2E", "brightBlack": "#3A4661",
+      "red": "#F87171", "brightRed": "#FCA5A5",
+      "green": "#5CB37A", "brightGreen": "#86EFAC",
+      "yellow": "#FFB020", "brightYellow": "#FCD34D",
+      "blue": "#60A5FA", "brightBlue": "#93C5FD",
+      "purple": "#B587D6", "brightPurple": "#D8B4FE",
+      "cyan": "#22D3EE", "brightCyan": "#67E8F9",
+      "white": "#E8EEF7", "brightWhite": "#FFFFFF"
+    }
+  ]
+}
+EOF
+
+# the icon: prefer the packaged branding .ico, else make one from the png
+if [ -f "$ROOT/usr/share/larzos/branding/larzos.ico" ]; then
+  cp "$ROOT/usr/share/larzos/branding/larzos.ico" "$ROOT/usr/lib/larzos/larzos.ico"
+elif command -v convert >/dev/null && [ -f "$HERE/packages/larz-branding/files/art/larzos.png" ]; then
+  convert "$HERE/packages/larz-branding/files/art/larzos.png" -define icon:auto-resize=256,128,64,48,32,16 \
+    "$ROOT/usr/lib/larzos/larzos.ico" || true
+fi
+[ -f "$HERE/packages/larz-branding/files/art/larzos.ico" ] && \
+  cp "$HERE/packages/larz-branding/files/art/larzos.ico" "$ROOT/usr/lib/larzos/larzos.ico"
+
 for m in proc sys dev dev/pts; do mount --bind "/$m" "$ROOT/$m"; done
 
-chroot "$ROOT" /bin/sh -eux <<'CHROOT'
+chroot "$ROOT" env LARZOS_CLAUDE="${LARZOS_CLAUDE:-1}" /bin/sh -eux <<'CHROOT'
 export DEBIAN_FRONTEND=noninteractive
 apt-get update
 # larz-branding's postinst runs `larz-rebrand apply`, so the image presents as
 # LarzOS the moment the package lands.
 apt-get install -y --no-install-recommends larz-branding larz larz-system larz-ai larzsh
-# Claude Code, preinstalled. larz-claude-code's postinst runs `npm i -g
-# @anthropic-ai/claude-code` inside the chroot (this build stage has network).
-apt-get install -y --no-install-recommends larz-claude-code || \
-  echo "build-rootfs: larz-claude-code install had a problem (continuing)"
+# Claude Code, preinstalled (LARZOS_CLAUDE=0 skips the big node layer).
+# larz-claude-code's postinst runs `npm i -g @anthropic-ai/claude-code`.
+if [ "${LARZOS_CLAUDE:-1}" = 1 ]; then
+  apt-get install -y --no-install-recommends larz-claude-code || \
+    echo "build-rootfs: larz-claude-code install had a problem (continuing)"
+fi
 useradd -m -s /usr/bin/larzsh -G sudo larz
 echo 'larz ALL=(ALL) NOPASSWD:ALL' > /etc/sudoers.d/larz
 chmod 440 /etc/sudoers.d/larz

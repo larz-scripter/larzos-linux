@@ -39,12 +39,15 @@ jobs:
         if: startsWith(github.ref, 'refs/tags/')
         run: |
           sudo apt-get update
-          sudo apt-get install -y debootstrap debian-archive-keyring
+          sudo apt-get install -y debootstrap debian-archive-keyring imagemagick
           V="${GITHUB_REF_NAME#v}"
           sudo OUT="dist/larzos-rootfs-amd64-$V.tar.gz" LARZOS_APT_BASE=https://larzos.com/apt \
             sh tools/build-rootfs.sh
-          sudo chown "$USER" dist/*.tar.gz
-          (cd dist && sha256sum larzos-rootfs-*.tar.gz > larzos-rootfs-amd64-$V.tar.gz.sha256)
+          sudo chown -R "$USER" dist
+          # The rootfs carries /etc/wsl-distribution.conf, so it doubles as a
+          # branded LarzOS WSL distribution: `wsl --install --from-file *.wsl`.
+          cp "dist/larzos-rootfs-amd64-$V.tar.gz" "dist/larzos-$V.wsl"
+          (cd dist && sha256sum larzos-rootfs-amd64-$V.tar.gz larzos-$V.wsl > larzos-amd64-$V.sha256)
 
       - name: Attach artifacts to the GitHub release
         if: startsWith(github.ref, 'refs/tags/')
@@ -53,6 +56,7 @@ jobs:
           files: |
             dist/*.deb
             dist/*.tar.gz
+            dist/*.wsl
             dist/*.sha256
           generate_release_notes: true
 

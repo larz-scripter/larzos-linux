@@ -45,9 +45,12 @@ base that boots on today's hardware.
       verified on VirtualBox 7.2
 - [x] `larz-install` — a Larzscript disk installer, no Calamares
 - [x] Claude Code preinstalled — `larz code` (`larz-claude-code`)
-- [ ] LarzOS phone app — run the OS in a proot userland, Termux-free
-- [ ] arm64 rootfs published (unblocks the phone app)
-- [ ] publish the WSL image to the Microsoft Store
+- [x] arm64 rootfs published (v0.1.7)
+- [x] first-class WSL distribution — `wsl --install --from-file larzos-<ver>.wsl`
+      (branded name/icon/OOBE/terminal profile)
+- [ ] LarzOS phone app — run the OS in a proot userland, Termux-free (scaffold at
+      larz-scripter/larzos-app; CI builds an APK, not device-tested)
+- [ ] `LarzOS.exe` / MSIX WSL distro-launcher + Microsoft Store listing
 - [ ] `larz-aid`: real local model execution (ollama/llama.cpp wrapper)
 - [ ] Gateway: an Anthropic-compatible `/v1/messages` proxy so `larz code`
       can route through it
