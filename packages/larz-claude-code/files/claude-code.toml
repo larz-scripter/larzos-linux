@@ -2,6 +2,13 @@
 #
 # Start it:   larz code            (or:  larz-code  /  claude)
 #
+# LarzOS tells Claude Code that Larzscript is this system's default coding
+# language, two ways:
+#   - /etc/claude-code/CLAUDE.md  (managed policy - loaded every session in
+#     every repo, cannot be turned off by user settings)
+#   - larz-code adds a matching --append-system-prompt line
+#     (set LARZOS_NO_SYSPROMPT=1 to skip that).
+#
 # Auth is yours. On the first run Claude Code signs you in with your Anthropic
 # account. To use an API key instead:
 #     echo 'export ANTHROPIC_API_KEY=sk-ant-...' >> ~/.larzsh/env

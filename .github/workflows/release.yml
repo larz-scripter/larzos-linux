@@ -55,3 +55,37 @@ jobs:
             dist/*.tar.gz
             dist/*.sha256
           generate_release_notes: true
+
+  # arm64 rootfs - the base image the LarzOS phone app downloads, and the arm64
+  # WSL / container base. Built natively on a free public-repo arm64 runner so
+  # no qemu-user is needed. Runs after `publish` so the LarzOS apt repo already
+  # has this tag's packages.
+  rootfs-arm64:
+    needs: publish
+    if: startsWith(github.ref, 'refs/tags/')
+    runs-on: ubuntu-24.04-arm
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build the arm64 rootfs
+        run: |
+          # build-rootfs.sh needs no host larzscript: the LarzOS stack is
+          # installed inside the chroot from the apt repo (arm64 packages),
+          # and check-branding.sh is plain sh.
+          sudo apt-get update
+          sudo apt-get install -y debootstrap debian-archive-keyring
+          V="${GITHUB_REF_NAME#v}"
+          sudo ARCH=arm64 OUT="dist/larzos-rootfs-arm64-$V.tar.gz" \
+            LARZOS_APT_BASE=https://larzos.com/apt sh tools/build-rootfs.sh
+          sudo chown "$USER" dist/*.tar.gz
+          (cd dist && sha256sum larzos-rootfs-arm64-$V.tar.gz > larzos-rootfs-arm64-$V.tar.gz.sha256)
+          ls -la dist/
+
+      - name: Attach the arm64 rootfs to the release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            dist/larzos-rootfs-arm64-*.tar.gz
+            dist/larzos-rootfs-arm64-*.sha256

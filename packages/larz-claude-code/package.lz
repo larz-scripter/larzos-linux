@@ -18,12 +18,16 @@ pkg.package({
   "arch":      "all",
   "section":   "devel",
   "depends":   ["nodejs", "npm", "ca-certificates", "git"],
-  "conffiles": ["/etc/larzos/claude-code.toml"],
+  "conffiles": ["/etc/larzos/claude-code.toml", "/etc/claude-code/CLAUDE.md"],
   "scripts":   {"postinst": "files/postinst", "prerm": "files/prerm"},
   "build":     [],
   "install": [
     "install -Dm755 files/larz-code        $DESTDIR/usr/bin/larz-code",
     "install -Dm644 files/claude-code.toml $DESTDIR/etc/larzos/claude-code.toml",
     "install -Dm644 files/larz-code.1      $DESTDIR/usr/share/man/man1/larz-code.1",
+    # Managed-policy CLAUDE.md: Claude Code loads this on every session in every
+    # repo and it cannot be excluded by user settings. This is how LarzOS tells
+    # Claude that Larzscript is the system's default language.
+    "install -Dm644 files/CLAUDE.md        $DESTDIR/etc/claude-code/CLAUDE.md",
   ],
 })

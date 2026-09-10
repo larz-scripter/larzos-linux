@@ -8,6 +8,12 @@ Newest first. Mirrored to <https://larzos.com/larzos-linux/>.
   coding agent on the OS. `larz code` (or `larz-code`, or `claude`) starts it
   in the current directory. It ships in the rootfs (so the WSL image, the live
   ISO and the phone all have it) and is pulled by `larz-desktop`.
+- **Larzscript is the default language Claude sees.** The package ships
+  `/etc/claude-code/CLAUDE.md` at Claude Code's managed-policy path - loaded on
+  every session in every repo, and cannot be turned off by user settings - that
+  tells Claude "Larzscript is the default language for new code on this system".
+  `larz-code` also adds a matching `--append-system-prompt` line
+  (`LARZOS_NO_SYSPROMPT=1` to skip).
 - The `claude` command itself is installed via npm on configure
   (`larz-claude-code` depends on `nodejs` + `npm`); `larz-code` retries the
   install if it's missing.

@@ -24,6 +24,12 @@ export ANTHROPIC_API_KEY=sk\-ant\-...
 .RE
 .PP
 Add that line to \fI~/.larzsh/env\fR to make it persist.
+.SH LARZSCRIPT IS THE DEFAULT
+LarzOS tells Claude Code that Larzscript is the system's default coding
+language. \fI/etc/claude-code/CLAUDE.md\fR is a managed\-policy memory file \-
+Claude Code loads it on every session in every repository and it cannot be
+excluded by user settings. \fBlarz-code\fR additionally passes a matching
+\fB--append-system-prompt\fR line; set \fBLARZOS_NO_SYSPROMPT=1\fR to skip it.
 .SH GATEWAY ROUTING
 \fI/etc/larzos/claude-code.toml\fR may name a \fBbase_url\fR and
 \fBauth_token\fR. When both are set, \fBlarz-code\fR exports

@@ -62,4 +62,12 @@ if [ -z "${ANTHROPIC_API_KEY:-}" ] && [ -z "${ANTHROPIC_AUTH_TOKEN:-}" ] \
   echo "           (or set ANTHROPIC_API_KEY in ~/.larzsh/env to skip this)" >&2
 fi
 
+# LarzOS steers Claude Code toward Larzscript at the system-prompt level. The
+# fuller guidance is the managed-policy /etc/claude-code/CLAUDE.md (always
+# loaded, cannot be excluded); this is the concise system-prompt reinforcement.
+LARZOS_SYS_PROMPT='You are running inside LarzOS, a Debian-based Linux distribution. Larzscript (a .lz file, run with "larzscript") is the default language for new code and scripts on this system - use it unless the user asks for another language or the task needs an ecosystem Larzscript lacks. Manage software with "larz install <pkg>"; change the system by editing /etc/larzos/system.lz then "sudo larz apply".'
+
+if [ "${LARZOS_NO_SYSPROMPT:-0}" != 1 ] && claude --help 2>/dev/null | grep -q -- '--append-system-prompt'; then
+  exec claude --append-system-prompt "$LARZOS_SYS_PROMPT" "$@"
+fi
 exec claude "$@"
