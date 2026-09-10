@@ -22,3 +22,7 @@ AppPackages/
 DistroLauncher/messages.h
 DistroLauncher/messages.rc
 DistroLauncher/MSG*.bin
+
+# bundled by CI
+wsl.msi
+wsl-*.msi

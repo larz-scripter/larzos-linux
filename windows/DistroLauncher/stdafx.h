@@ -17,6 +17,7 @@
 #include <stdio.h>
 #include <conio.h>
 #include <io.h>
+#include <appmodel.h>
 #include <string>
 #include <memory>
 #include <assert.h>

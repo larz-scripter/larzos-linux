@@ -103,6 +103,12 @@
       <DeploymentContent>true</DeploymentContent>
     </None>
   </ItemGroup>
+  <!-- Offline WSL runtime, bundled into the package by CI (see release.yml). -->
+  <ItemGroup Condition="Exists('wsl.msi')">
+    <None Include="wsl.msi">
+      <DeploymentContent>true</DeploymentContent>
+    </None>
+  </ItemGroup>
   <ItemGroup>
     <Image Include="Assets\LargeTile.scale-100.png" />
     <Image Include="Assets\LargeTile.scale-125.png" />

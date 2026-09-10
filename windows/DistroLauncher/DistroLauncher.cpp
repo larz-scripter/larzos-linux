@@ -78,24 +78,31 @@ static EngineState EnsureEngine()
 
     Helpers::PrintMessage(MSG_ENGINE_SETUP_STARTING);
 
-    // 1. Windows' own bootstrapper. Self-elevates; enables Virtual Machine
-    //    Platform and installs the WSL runtime.
     DWORD ec = 1;
-    bool anyStepRan = RunAndWait(L"wsl.exe --install --no-distribution", &ec);
+    bool anyStepRan = false;
+    const std::wstring msi = ExeDir() + L"\\wsl.msi";
+    const bool haveMsi =
+        GetFileAttributesW(msi.c_str()) != INVALID_FILE_ATTRIBUTES;
 
-    // 2. Offline fallback: the runtime MSI + feature enable, both elevated.
+    if (haveMsi) {
+        // Fully-offline path: the Virtual Machine Platform feature ships in the
+        // OS (DISM needs no network) and the WSL runtime is the bundled MSI.
+        // Both steps run elevated via one UAC prompt each.
+        anyStepRan |= RunAndWait(
+            L"powershell.exe -NoProfile -ExecutionPolicy Bypass -Command "
+            L"\"Start-Process dism.exe -Verb RunAs -Wait -ArgumentList "
+            L"'/online','/enable-feature','/featurename:VirtualMachinePlatform',"
+            L"'/all','/norestart'\"", &ec);
+        anyStepRan |= RunAndWait(
+            L"powershell.exe -NoProfile -ExecutionPolicy Bypass -Command "
+            L"\"Start-Process msiexec.exe -Verb RunAs -Wait "
+            L"-ArgumentList '/i',(Resolve-Path '" + msi + L"'),'/passive'\"", &ec);
+    }
+
+    // Windows' own bootstrapper (needs network) - used when there's no bundled
+    // MSI, or as a backstop if the offline steps didn't take.
     if (!EnginePresent()) {
-        const std::wstring msi = ExeDir() + L"\\wsl.msi";
-        if (GetFileAttributesW(msi.c_str()) != INVALID_FILE_ATTRIBUTES) {
-            anyStepRan |= RunAndWait(
-                L"powershell.exe -NoProfile -ExecutionPolicy Bypass -Command "
-                L"\"Start-Process msiexec.exe -Verb RunAs -Wait "
-                L"-ArgumentList '/i',(Resolve-Path '" + msi + L"'),'/passive'\"", &ec);
-            anyStepRan |= RunAndWait(
-                L"powershell.exe -NoProfile -ExecutionPolicy Bypass -Command "
-                L"\"Start-Process dism.exe -Verb RunAs -Wait -ArgumentList "
-                L"'/online','/enable-feature','/featurename:VirtualMachinePlatform','/all','/norestart'\"", &ec);
-        }
+        anyStepRan |= RunAndWait(L"wsl.exe --install --no-distribution", &ec);
     }
 
     if (EnginePresent()) {
@@ -106,6 +113,65 @@ static EngineState EnsureEngine()
     }
     // A setup step ran; the feature is enabled but needs a reboot to load.
     return EngineState::NeedsReboot;
+}
+
+// True when LarzOS.exe is running from inside its installed MSIX package.
+static bool RunningPackaged()
+{
+    UINT32 len = 0;
+    return GetCurrentPackageFullName(&len, nullptr) != APPMODEL_ERROR_NO_PACKAGE;
+}
+
+// What a shortcut / RunOnce entry should launch. For the MSIX it is the
+// `larzos.exe` execution alias (a stable path that survives app updates); for
+// the loose build it is this executable.
+static std::wstring LaunchTarget()
+{
+    if (RunningPackaged()) {
+        wchar_t local[MAX_PATH] = {};
+        if (GetEnvironmentVariableW(L"LOCALAPPDATA", local, ARRAYSIZE(local))) {
+            return std::wstring(local) + L"\\Microsoft\\WindowsApps\\larzos.exe";
+        }
+    }
+    wchar_t self[MAX_PATH] = {};
+    GetModuleFileNameW(nullptr, self, ARRAYSIZE(self));
+    return self;
+}
+
+// Put a "LarzOS" icon on the desktop so there is an obvious thing to click,
+// especially after the first-run reboot. Idempotent - overwrites its own .lnk.
+static void EnsureDesktopIcon()
+{
+    const std::wstring target = LaunchTarget();
+    wchar_t self[MAX_PATH] = {};
+    GetModuleFileNameW(nullptr, self, ARRAYSIZE(self));
+
+    std::wstring ps =
+        L"powershell.exe -NoProfile -ExecutionPolicy Bypass -Command \""
+        L"$s=(New-Object -ComObject WScript.Shell); "
+        L"$lnk=$s.CreateShortcut([IO.Path]::Combine([Environment]::GetFolderPath('Desktop'),'LarzOS.lnk')); "
+        L"$lnk.TargetPath='" + target + L"'; "
+        L"$lnk.IconLocation='" + std::wstring(self) + L",0'; "
+        L"$lnk.Description='Open LarzOS'; $lnk.Save()\"";
+
+    DWORD ec = 0;
+    RunAndWait(ps, &ec);
+}
+
+// Re-open LarzOS automatically after the first-run reboot.
+static void SetResumeAfterReboot()
+{
+    HKEY key = nullptr;
+    if (RegCreateKeyExW(HKEY_CURRENT_USER,
+            L"Software\\Microsoft\\Windows\\CurrentVersion\\RunOnce",
+            0, nullptr, 0, KEY_SET_VALUE, nullptr, &key, nullptr) != ERROR_SUCCESS) {
+        return;
+    }
+    const std::wstring value = L"\"" + LaunchTarget() + L"\"";
+    RegSetValueExW(key, L"LarzOS", 0, REG_SZ,
+                   reinterpret_cast<const BYTE*>(value.c_str()),
+                   static_cast<DWORD>((value.size() + 1) * sizeof(wchar_t)));
+    RegCloseKey(key);
 }
 
 // Relaunch a fresh copy of this exe (so a newly-present wslapi.dll is loaded)
@@ -194,6 +260,8 @@ int wmain(int argc, wchar_t const *argv[])
             RelaunchSelf();
             return 0;
         case EngineState::NeedsReboot:
+            EnsureDesktopIcon();
+            SetResumeAfterReboot();
             Helpers::PrintMessage(MSG_ENGINE_SETUP_REBOOT);
             if (arguments.empty()) {
                 Helpers::PromptForInput();
@@ -223,6 +291,7 @@ int wmain(int argc, wchar_t const *argv[])
             }
 
         } else {
+            EnsureDesktopIcon();
             Helpers::PrintMessage(MSG_INSTALL_SUCCESS);
         }
 

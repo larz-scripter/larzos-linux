@@ -52,7 +52,7 @@ Installing LarzOS, this may take a few minutes...
 
 MessageId=1007 SymbolicName=MSG_INSTALL_SUCCESS
 Language=English
-LarzOS is installed. Launch it from the Start menu, Windows Terminal, or `wsl -d LarzOS`.
+LarzOS is installed. Open it from the desktop icon, the Start menu, or Windows Terminal.
 .
 
 MessageId=1008 SymbolicName=MSG_ERROR_CODE
@@ -95,8 +95,10 @@ Windows will ask for permission - choose Yes.
 
 MessageId=1016 SymbolicName=MSG_ENGINE_SETUP_REBOOT
 Language=English
-The Linux engine is installed. Restart Windows to finish, then open LarzOS
-again - it will pick up where it left off.
+The Linux engine is installed. Restart Windows to finish.
+
+A LarzOS icon is now on your desktop - double-click it after the restart to
+open LarzOS. (It also opens on its own once, right after you sign back in.)
 .
 
 MessageId=1017 SymbolicName=MSG_ENGINE_SETUP_FAILED
