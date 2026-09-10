@@ -172,7 +172,7 @@
       <AdditionalInputs>$(SolutionDir)$(Platform)\$(Configuration)\LarzOS.exe;%(AdditionalInputs)</AdditionalInputs>
       <Command>if not exist "$(OutDir)" md "$(OutDir)"
 if exist "$(SolutionDir)$(Platform)\$(Configuration)\LarzOS.exe" copy /Y "$(SolutionDir)$(Platform)\$(Configuration)\LarzOS.exe" "$(OutDir)$(TargetName).exe"
-if not exist "$(OutDir)$(TargetName).exe" (echo LarzOS.exe was not staged into "$(OutDir)" & exit /b 1)
+if not exist "$(OutDir)$(TargetName).exe" exit /b 1
 exit /b 0</Command>
       <Outputs>$(OutDir)$(TargetName).exe;%(Outputs)</Outputs>
     </CustomBuild>
