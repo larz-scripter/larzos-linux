@@ -83,10 +83,10 @@ int wmain(int argc, wchar_t const *argv[])
         arguments.push_back(argv[index]);
     }
 
-    // Ensure that the Windows Subsystem for Linux optional component is installed.
+    // Ensure the Windows Linux engine (the "WSL" optional component) is enabled.
     DWORD exitCode = 1;
     if (!g_wslApi.WslIsOptionalComponentInstalled()) {
-        Helpers::PrintErrorMessage(HRESULT_FROM_WIN32(ERROR_LINUX_SUBSYSTEM_NOT_PRESENT));
+        Helpers::PrintMessage(MSG_MISSING_WSL_COMPONENT);
         if (arguments.empty()) {
             Helpers::PromptForInput();
         }

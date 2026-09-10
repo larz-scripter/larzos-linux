@@ -1,8 +1,8 @@
 name: windows-launcher-ci
 
-# Compile-check for the LarzOS WSL launcher (windows/). The real release
-# artifact - LarzOS.exe bundled with the rootfs - is built by release.yml on a
-# tag. This job just proves the C++ still compiles on every push that touches it.
+# Build-checks for the LarzOS Windows app (windows/). The release artifacts -
+# LarzOS.exe + rootfs, and the signed MSIX - are produced by release.yml on a
+# tag; this workflow proves both still build on every push that touches windows/.
 
 on:
   push:
@@ -12,14 +12,12 @@ on:
   workflow_dispatch:
 
 jobs:
-  build:
+  exe:
     runs-on: windows-2022
     steps:
       - uses: actions/checkout@v4
-
       - name: Add MSBuild to PATH
         uses: microsoft/setup-msbuild@v2
-
       - name: Build LarzOS.exe (x64 + ARM64, Release)
         shell: pwsh
         run: |
@@ -34,10 +32,58 @@ jobs:
             if ($LASTEXITCODE -ne 0) { throw "build failed for $p" }
           }
           Get-ChildItem -Recurse build -Filter LarzOS.exe | Select-Object FullName, Length
-
       - uses: actions/upload-artifact@v4
         with:
           name: LarzOS-exe
           path: |
             build/x64/LarzOS.exe
             build/ARM64/LarzOS.exe
+
+  msix:
+    runs-on: windows-2022
+    steps:
+      - uses: actions/checkout@v4
+      - name: Add MSBuild to PATH
+        uses: microsoft/setup-msbuild@v2
+
+      - name: Stub rootfs for the packaging build
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force windows\x64 | Out-Null
+          "stub - the real rootfs is injected on release" | Out-File -Encoding ascii windows\x64\stub
+          tar -czf windows\x64\install.tar.gz -C windows\x64 stub
+
+      - name: Self-signed signing certificate (CN=Larz Scripter)
+        shell: pwsh
+        run: |
+          $cert = New-SelfSignedCertificate -Type Custom -Subject "CN=Larz Scripter" `
+            -KeyUsage DigitalSignature -FriendlyName "LarzOS CI (test)" `
+            -CertStoreLocation "Cert:\CurrentUser\My" `
+            -TextExtension @("2.5.29.37={text}1.3.6.1.5.5.7.3.3", "2.5.29.19={text}")
+          $pw = ConvertTo-SecureString -String "larzos" -Force -AsPlainText
+          Export-PfxCertificate -Cert $cert -Password $pw `
+            -FilePath windows\DistroLauncher-Appx\LarzOS-Appx_TemporaryKey.pfx | Out-Null
+
+      - name: Build the LarzOS MSIX (x64)
+        shell: pwsh
+        run: |
+          $sdk = (Get-ChildItem "C:\Program Files (x86)\Windows Kits\10\Include" -Directory |
+                  Where-Object Name -match '^10\.' | Sort-Object Name | Select-Object -Last 1).Name
+          msbuild windows\LarzOS.sln `
+            /p:Configuration=Release /p:Platform=x64 `
+            /p:WindowsTargetPlatformVersion=$sdk `
+            /p:AppxBundle=Never /p:UapAppxPackageBuildMode=SideloadOnly `
+            /p:AppxPackageSigningEnabled=true `
+            /p:PackageCertificateKeyFile=LarzOS-Appx_TemporaryKey.pfx `
+            /p:PackageCertificatePassword=larzos `
+            /m /nologo
+          if ($LASTEXITCODE -ne 0) { throw "MSIX build failed" }
+          Get-ChildItem -Recurse windows -Include *.msix,*.msixbundle | Select-Object FullName, Length
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: LarzOS-msix
+          path: |
+            windows/**/*.msix
+            windows/**/*.msixbundle
+          if-no-files-found: warn

@@ -86,3 +86,15 @@ Language=English
 Enable the "Virtual Machine Platform" Windows feature and turn on virtualization
 in your BIOS, then try again. Guide: https://larzos.com/larzos-linux/
 .
+
+MessageId=1015 SymbolicName=MSG_MISSING_WSL_COMPONENT
+Language=English
+LarzOS needs the Windows Linux engine, which is off on this PC.
+
+Open PowerShell as Administrator and run:
+
+    wsl --install --no-distribution
+
+then reboot and start LarzOS again. (This is a one-time Windows setup; you won't
+need to touch it after that.)
+.
