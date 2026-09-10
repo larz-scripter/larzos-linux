@@ -70,18 +70,26 @@ jobs:
           $sdk = (Get-ChildItem "C:\Program Files (x86)\Windows Kits\10\Include" -Directory |
                   Where-Object Name -match '^10\.' | Sort-Object Name | Select-Object -Last 1).Name
           $sln = "$PWD\windows\"
-          # Both projects share one OutDir so the .exe is exactly where the
-          # AppX packaging step looks for the app payload.
-          $out = "$sln`x64\Release\DistroLauncher-Appx\"
 
+          # 1. Build the launcher.
           msbuild windows\DistroLauncher\LarzOS.vcxproj `
             /p:Configuration=Release /p:Platform=x64 /p:SolutionDir=$sln `
-            /p:WindowsTargetPlatformVersion=$sdk /p:OutDir=$out /m /nologo
+            /p:WindowsTargetPlatformVersion=$sdk /m /nologo
           if ($LASTEXITCODE -ne 0) { throw "launcher build failed" }
 
+          # 2. Stage it where the Appx project's custom-build reads it:
+          #    $(SolutionDir)$(Platform)\$(Configuration)\LarzOS.exe
+          $exe = (Get-ChildItem -Recurse $sln -Filter LarzOS.exe |
+                  Where-Object FullName -notmatch 'Appx' | Select-Object -First 1).FullName
+          if (-not $exe) { throw "LarzOS.exe not found after launcher build" }
+          New-Item -ItemType Directory -Force "$sln`x64\Release" | Out-Null
+          Copy-Item $exe "$sln`x64\Release\LarzOS.exe" -Force
+          Write-Host "staged $exe"
+
+          # 3. Package + sign.
           msbuild windows\DistroLauncher-Appx\DistroLauncher-Appx.vcxproj `
             /p:Configuration=Release /p:Platform=x64 /p:SolutionDir=$sln `
-            /p:WindowsTargetPlatformVersion=$sdk /p:OutDir=$out `
+            /p:WindowsTargetPlatformVersion=$sdk `
             /p:AppxBundle=Never /p:UapAppxPackageBuildMode=SideloadOnly `
             /p:AppxPackageSigningEnabled=true `
             /p:PackageCertificateKeyFile=LarzOS-Appx_TemporaryKey.pfx `
