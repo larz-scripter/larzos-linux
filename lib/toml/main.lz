@@ -10,6 +10,30 @@
 #   print(data["db"]["port"])          # 5432
 #   print(toml.stringify(data))
 
+# A real number grammar: optional leading sign, digits and/or a fractional
+# part, at most one '.', nothing else - so version/date/ID-like unquoted
+# values ("1.2.3", "555-1234", "2024-01-01") fall through to strings
+# instead of being silently truncated into a wrong number.
+fn _is_number(t) {
+  if len(t) == 0 { return false }
+  let i = 0
+  if t[0:1] == "+" or t[0:1] == "-" { i = 1 }
+  let seen_digit = false
+  let seen_dot = false
+  while i < len(t) {
+    let c = t[i:i+1]
+    if "0123456789".find(c) >= 0 {
+      seen_digit = true
+    } else if c == "." and not seen_dot {
+      seen_dot = true
+    } else {
+      return false
+    }
+    i = i + 1
+  }
+  return seen_digit
+}
+
 fn _scalar(raw) {
   let t = raw.strip()
   if len(t) >= 2 and t[0:1] == "\"" and t[len(t)-1:] == "\"" { return t[1:len(t)-1] }
@@ -26,11 +50,7 @@ fn _scalar(raw) {
     }
     return items
   }
-  let looks_num = len(t) > 0
-  for c in t {
-    if "0123456789.-+".find(c) < 0 { looks_num = false }
-  }
-  if looks_num {
+  if _is_number(t) {
     if t.find(".") >= 0 { return float(t) }
     return int(t)
   }
