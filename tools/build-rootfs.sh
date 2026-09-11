@@ -186,15 +186,26 @@ if [ "${LARZOS_CLAUDE:-1}" = 1 ]; then
 
   /opt/node/bin/npm install -g --no-fund --no-audit @anthropic-ai/claude-code \
     || echo "build-rootfs: claude-code npm install had a problem (continuing)"
-  # expose the claude bin on the normal PATH
-  if [ -e /opt/node/bin/claude ]; then
-    ln -sf /opt/node/bin/claude /usr/local/bin/claude
+
+  # claude-code ships as a ~200MB self-contained native ELF, delivered as a
+  # hardlink (bin/claude.exe  <->  the per-arch package). The phone app unpacks
+  # the rootfs tar and can't always reproduce hardlinks, which leaves `claude`
+  # a dangling symlink. Move the real binary to a plain file on PATH and drop
+  # the hardlinked copies so it survives any unpack.
+  CCDIR=/opt/node/lib/node_modules/@anthropic-ai/claude-code
+  if [ -s "$CCDIR/bin/claude.exe" ]; then
+    rm -f /usr/local/bin/claude /opt/node/bin/claude
+    mv "$CCDIR/bin/claude.exe" /usr/local/bin/claude
+    chmod 0755 /usr/local/bin/claude
+    ln -sf /usr/local/bin/claude /opt/node/bin/claude
+    rm -rf "$CCDIR"/node_modules/@anthropic-ai/claude-code-linux-* 2>/dev/null || true
   fi
 
   apt-get install -y --no-install-recommends larz-claude-code || \
     echo "build-rootfs: larz-claude-code install had a problem (continuing)"
 
-  command -v claude && claude --version || echo "build-rootfs: WARNING - claude not runnable"
+  test -x /usr/local/bin/claude && /usr/local/bin/claude --version \
+    || { echo "build-rootfs: FATAL - claude not runnable"; exit 1; }
 fi
 useradd -m -s /usr/bin/larzsh -G sudo larz
 echo 'larz ALL=(ALL) NOPASSWD:ALL' > /etc/sudoers.d/larz
