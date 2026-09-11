@@ -18,6 +18,10 @@ let WCONF  = env("LARZOS_WALLET_CONF", "/etc/larzos/wallet.toml")
 let BCONF  = env("LARZOS_BUDGET_CONF", "/etc/larzos/budget.toml")
 let WDIR   = env("LARZOS_WALLET_DIR",  "/var/lib/larzos/wallet")
 
+fn _require(cond, msg) {
+  if not cond { throw {"type": "WalletError", "message": msg} }
+}
+
 fn _shq(s) { return "'" + str(s).replace("'", "'\\''") + "'" }
 fn now_iso()  { return capture("date -u +%Y-%m-%dT%H:%M:%SZ").strip() }
 fn this_month() { return capture("date -u +%Y-%m").strip() }
@@ -89,6 +93,10 @@ fn budget_for(category) {
 
 # Would spending `amount` on `category` this month breach the cap?
 fn check(category, amount) {
+  if amount < 0.0 {
+    return {"ok": false, "cap": -1.0, "spent": 0.0, "remaining": -1.0,
+            "reason": "amount must be non-negative (got " + fmt(amount) + ")"}
+  }
   let cap = budget_for(category)
   let used = spent(category, "")
   if cap < 0.0 {
@@ -117,6 +125,7 @@ fn _receipt(e) {
 }
 
 fn record(kind, category, amount, ref, note) {
+  _require(amount >= 0.0, "record(): amount must be non-negative (got " + fmt(amount) + ")")
   let e = {"ts": now_iso(), "month": this_month(), "kind": kind,
            "category": category, "amount": micro(amount),
            "currency": conf()["currency"], "ref": ref, "note": note}

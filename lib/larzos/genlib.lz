@@ -13,6 +13,8 @@ import "json" as json
 
 let GDIR = env("LARZOS_GEN_DIR", "/var/lib/larzos/generations")
 
+fn _shq(s) { return "'" + str(s).replace("'", "'\\''") + "'" }
+
 fn _nums() {
   if not file_exists(GDIR) { return [] }
   let ns = []
@@ -49,12 +51,28 @@ fn create(name, note) {
   return n
 }
 
+# tar extraction only adds/overwrites files - it never deletes ones that
+# were created after the snapshot was taken, so a plain `tar xzf` "restore"
+# silently leaves later config (e.g. an /etc/larzos/budget.toml written
+# after this generation) still in effect. Remove any /etc file that isn't
+# part of the snapshot before extracting it, so the restore is authoritative.
+fn _prune_to_snapshot(archive) {
+  let archived = {}
+  for ln in capture("tar tzf " + _shq(archive) + " 2>/dev/null").strip().split("\n") {
+    if ln != "" and not ln.ends_with("/") { archived["/" + ln] = true }
+  }
+  for ln in capture("find /etc -type f -o -type l 2>/dev/null").strip().split("\n") {
+    if ln != "" and not archived.has(ln) { run("rm -f " + _shq(ln)) }
+  }
+}
+
 fn restore(n) {
   let g = GDIR + "/" + str(n)
   if not file_exists(g + "/meta.json") { return {"ok": false, "error": "no generation " + str(n)} }
   # snapshot the current state first, so restore is itself reversible
   create("pre-switch", "auto before switch to " + str(n))
   if file_exists(g + "/etc.tar.gz") {
+    _prune_to_snapshot(g + "/etc.tar.gz")
     run("tar xzf " + g + "/etc.tar.gz -C / 2>/dev/null")
   }
   if file_exists(g + "/selections") {

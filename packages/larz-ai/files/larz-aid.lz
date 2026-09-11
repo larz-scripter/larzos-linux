@@ -33,6 +33,10 @@ import "larzos/wallet" as wal
 let CONF = env("LARZOS_AI_CONF", "/etc/larzos/ai.toml")
 let PORT = int(env("LARZOS_AI_PORT", "8199"))
 
+# Upper bound assumed for completion tokens when a request doesn't pass
+# max_tokens, so the pre-flight budget estimate still has a real ceiling.
+let DEFAULT_MAX_TOKENS_ESTIMATE = 4096
+
 fn shq(s) { return "'" + str(s).replace("'", "'\\''") + "'" }
 
 fn load() {
@@ -136,7 +140,13 @@ fn complete(data) {
   }
 
   # gateway - budgeted + metered
-  let chk = wal.check("ai", 0.02)
+  # Pre-flight: estimate the real cost from the prompt size and a max_tokens
+  # clamp (or a fixed ceiling when the caller didn't pass one), and check
+  # *that* against budget - a fixed placeholder can't catch a big request.
+  let est_prompt_tok = int(len(prompt) / 4) + 1
+  let est_completion_tok = maxt > 0 ? maxt : DEFAULT_MAX_TOKENS_ESTIMATE
+  let est_cost = wal.micro((est_prompt_tok + est_completion_tok) / 1000000.0 * price_per_mtok(cfg, model))
+  let chk = wal.check("ai", est_cost)
   if not chk["ok"] {
     return {"ok": false, "backend": "gateway", "model": model, "cost": 0.0,
             "error": "AI budget reached - " + chk["reason"] + "  (raise it: larz budget ai <amount>)"}
@@ -154,6 +164,11 @@ fn complete(data) {
     if cost > 0.0 {
       wal.debit("ai", cost, model,
                    str(tok) + " tok - " + (len(prompt) > 60 ? prompt[0:60] + "..." : prompt))
+      # actual usage can still exceed the pre-flight estimate (e.g. no
+      # max_tokens was passed and the model ran long) - flag it if so.
+      if not wal.check("ai", 0.0)["ok"] {
+        gx["budget_warning"] = "this request pushed the 'ai' category over its monthly cap"
+      }
     }
   }
   return gx
