@@ -47,6 +47,14 @@ fn _norm_ai(ai) {
   return ai
 }
 
+fn _norm_gui(g) {
+  _default(g, "enabled", false)
+  _default(g, "display", 1)
+  _default(g, "resolution", "1366x800")
+  _default(g, "depth", 24)
+  return g
+}
+
 # The one entry point a system.lz calls.
 fn system(spec) {
   _require(type(spec) == "dict", "larzos.system(...) expects a table")
@@ -62,12 +70,14 @@ fn system(spec) {
   _default(spec, "audio", {})
   _default(spec, "ai", {})
   _default(spec, "budget", {})
+  _default(spec, "gui", {})
 
   let users = []
   for u in spec["users"] { users.push(_norm_user(u)) }
   spec["users"] = users
   spec["audio"] = _norm_audio(spec["audio"])
   spec["ai"] = _norm_ai(spec["ai"])
+  spec["gui"] = _norm_gui(spec["gui"])
 
   for name in keys(spec["services"]) {
     let v = spec["services"][name]
@@ -88,6 +98,7 @@ fn system(spec) {
     "audio": spec["audio"],
     "ai": spec["ai"],
     "budget": spec["budget"],
+    "gui": spec["gui"],
   }
 
   let dest = env("LARZOS_SPEC_OUT", "")

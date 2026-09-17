@@ -1,0 +1,229 @@
+# gui module - configure a lightweight, branded graphical desktop (Openbox +
+# tint2), served over VNC since most LarzOS targets (PRoot-Distro/Termux,
+# minimal cloud boxes) have no native display of their own.
+#
+# Package installation is NOT this module's job - add "larz-gui" (the
+# metapackage in packages/larz-gui) to spec.packages and the *packages*
+# module installs the real dependencies (openbox, tint2, tigervnc, ...).
+# This module only writes config/theme once those binaries exist, and - on
+# a host with no systemd (PRoot-Distro has none) - installs a plain
+# start/stop/status launcher instead of a systemd unit. On a host that does
+# have systemd, use spec.services["vncserver@<display>.service"] instead;
+# see docs/design.md.
+#
+# spec.gui = { enabled, display, resolution, depth }
+
+let id = "gui"
+let title = "Graphical desktop (GUI)"
+
+let VNCUSERS = "/etc/tigervnc/vncserver.users"
+let VNCCFG = "/etc/tigervnc/vncserver-config-defaults"
+let XSTARTUP = "/root/.vnc/xstartup"
+let OB_THEME_DIR = "/usr/share/themes/LarzOS-Dark/openbox-3"
+let OB_RC = "/root/.config/openbox/rc.xml"
+let TINT2RC = "/root/.config/tint2/tint2rc"
+let WALLPAPER = "/usr/share/backgrounds/larzos-dark.png"
+let LAUNCHER = "/usr/local/bin/larz-gui"
+
+fn _have_bin(name) {
+  return capture("command -v " + name + " 2>/dev/null").strip() != ""
+}
+
+fn _has_systemd() {
+  return capture("command -v systemctl 2>/dev/null").strip() != ""
+}
+
+fn _launcher_content(display, res, depth) {
+  return "#!/bin/sh\n" +
+         "# Managed by larz-system (gui module). Do not edit.\n" +
+         "# Direct start/stop for the LarzOS GUI desktop (no systemd required).\n" +
+         "DISPLAY_NUM=:" + str(display) + "\n" +
+         "case \"$1\" in\n" +
+         "  start)\n" +
+         "    vncserver $DISPLAY_NUM -geometry " + res + " -depth " + str(depth) + "\n" +
+         "    ;;\n" +
+         "  stop)\n" +
+         "    vncserver -kill $DISPLAY_NUM\n" +
+         "    ;;\n" +
+         "  status)\n" +
+         "    vncserver -list\n" +
+         "    ;;\n" +
+         "  *)\n" +
+         "    echo \"usage: larz-gui start|stop|status\"\n" +
+         "    exit 1\n" +
+         "    ;;\n" +
+         "esac\n"
+}
+
+fn _vncusers_content(display, user) {
+  return "# Managed by larz-system (gui module). Do not edit.\n" +
+         ":" + str(display) + "=" + user + "\n"
+}
+
+fn _vnccfg_content(d) {
+  # tigervnc-standalone-server's config-defaults is Perl, sourced as a
+  # module (must end with a true value).
+  return "# Managed by larz-system (gui module). Do not edit.\n" +
+         "$geometry = \"" + d["resolution"] + "\";\n" +
+         "$depth = " + str(d["depth"]) + ";\n" +
+         "$localhost = \"yes\";\n" +
+         "1;\n"
+}
+
+fn _xstartup_content() {
+  return "#!/bin/sh\n" +
+         "# Managed by larz-system (gui module). Do not edit.\n" +
+         "unset SESSION_MANAGER\n" +
+         "unset DBUS_SESSION_BUS_ADDRESS\n" +
+         "export XDG_CURRENT_DESKTOP=LarzOS\n" +
+         "[ -f " + WALLPAPER + " ] && feh --bg-fill " + WALLPAPER + " &\n" +
+         "tint2 &\n" +
+         "exec dbus-launch --exit-with-session openbox-session\n"
+}
+
+fn _themerc_content() {
+  return "# Managed by larz-system (gui module). LarzOS Dark Openbox theme.\n" +
+         "window.active.title.bg: Flat Solid\n" +
+         "window.active.title.bg.color: #0b0f1a\n" +
+         "window.active.border.color: #00c896\n" +
+         "window.active.border.width: 2\n" +
+         "window.active.label.text.color: #e8edf5\n" +
+         "window.active.button.unpressed.fg.color: #8b98a9\n" +
+         "window.inactive.title.bg: Flat Solid\n" +
+         "window.inactive.title.bg.color: #141c2c\n" +
+         "window.inactive.border.color: #26303d\n" +
+         "window.inactive.label.text.color: #8b98a9\n" +
+         "menu.items.bg: Flat Solid\n" +
+         "menu.items.bg.color: #0e1526\n" +
+         "menu.items.text.color: #e8edf5\n" +
+         "menu.items.active.bg: Flat Solid\n" +
+         "menu.items.active.bg.color: #00c896\n" +
+         "menu.items.active.text.color: #04120d\n" +
+         "menu.border.color: #26303d\n" +
+         "menu.title.bg: Flat Solid\n" +
+         "menu.title.bg.color: #0b0f1a\n" +
+         "menu.title.text.color: #00c896\n"
+}
+
+fn _rc_xml_content() {
+  return "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n" +
+         "<!-- Managed by larz-system (gui module). Do not edit. -->\n" +
+         "<openbox_config xmlns=\"http://openbox.org/3.4/rc\">\n" +
+         "  <theme><name>LarzOS-Dark</name><titleLayout>NLIMC</titleLayout></theme>\n" +
+         "  <keyboard>\n" +
+         "    <keybind key=\"W-Return\"><action name=\"Execute\"><command>lxterminal</command></action></keybind>\n" +
+         "    <keybind key=\"W-r\"><action name=\"Execute\"><command>rofi -show drun</command></action></keybind>\n" +
+         "    <keybind key=\"W-e\"><action name=\"Execute\"><command>pcmanfm</command></action></keybind>\n" +
+         "  </keyboard>\n" +
+         "  <menu>\n" +
+         "    <menu id=\"root-menu\" label=\"LarzOS\">\n" +
+         "      <item label=\"Terminal\"><action name=\"Execute\"><command>lxterminal</command></action></item>\n" +
+         "      <item label=\"File Manager\"><action name=\"Execute\"><command>pcmanfm</command></action></item>\n" +
+         "      <item label=\"Launcher\"><action name=\"Execute\"><command>rofi -show drun</command></action></item>\n" +
+         "      <separator/>\n" +
+         "      <item label=\"Exit LarzOS Desktop\"><action name=\"Exit\"/></item>\n" +
+         "    </menu>\n" +
+         "  </menu>\n" +
+         "</openbox_config>\n"
+}
+
+fn _tint2rc_content() {
+  return "# Managed by larz-system (gui module). LarzOS Dark tint2 panel.\n" +
+         "panel_items = TSC\n" +
+         "panel_size = 100% 30\n" +
+         "panel_background_id = 1\n" +
+         "rounded = 0\n" +
+         "border_width = 0\n" +
+         "background_color = #0b0f1a 95\n" +
+         "\n" +
+         "taskbar_mode = single_desktop\n" +
+         "taskbar_active_background_id = 2\n" +
+         "\n" +
+         "task_background_id = 1\n" +
+         "task_active_background_id = 2\n" +
+         "task_font_color = #8b98a9 100\n" +
+         "task_active_font_color = #e8edf5 100\n" +
+         "\n" +
+         "background_color_active = #00c896 25\n" +
+         "\n" +
+         "clock_font_color = #e8edf5 100\n" +
+         "clock_format = %H:%M\n" +
+         "\n" +
+         "systray_padding = 4 4 4\n" +
+         "systray_background_id = 0\n"
+}
+
+fn _file_action(desc, path, content) {
+  let have = file_exists(path) ? read_file(path) : ""
+  if have == content {
+    return {"desc": desc + " (already applied)", "cmd": "", "skip": true}
+  }
+  return {"desc": desc, "file": path, "content": content, "skip": false}
+}
+
+fn _exec_action(desc, path, content) {
+  let have = file_exists(path) ? read_file(path) : ""
+  let is_exec = capture("test -x " + path + " && echo yes || echo no").strip() == "yes"
+  if have == content and is_exec {
+    return [{"desc": desc + " (already applied)", "cmd": "", "skip": true}]
+  }
+  if have == content {
+    return [{"desc": "chmod +x " + path, "cmd": "chmod +x " + path, "skip": false}]
+  }
+  return [{"desc": desc, "file": path, "content": content, "skip": false},
+          {"desc": "chmod +x " + path, "cmd": "chmod +x " + path, "skip": false}]
+}
+
+fn plan(spec, ctx) {
+  let d = spec["gui"]
+
+  if not d["enabled"] {
+    if file_exists(XSTARTUP) or file_exists(LAUNCHER) {
+      return [{"desc": "gui disabled - remove " + XSTARTUP + " and " + LAUNCHER,
+                "cmd": "rm -f " + XSTARTUP + " " + LAUNCHER, "skip": false}]
+    }
+    return [{"desc": "gui disabled, nothing to do", "cmd": "", "skip": true}]
+  }
+
+  if not _have_bin("openbox") or not _have_bin("vncserver") {
+    return [{"desc": "gui enabled but packages not installed yet - add \"larz-gui\" to spec.packages first",
+              "cmd": "", "skip": true}]
+  }
+
+  let actions = []
+
+  actions.push(_file_action("write " + VNCUSERS, VNCUSERS, _vncusers_content(d["display"], "root")))
+  actions.push(_file_action("write " + VNCCFG, VNCCFG, _vnccfg_content(d)))
+  for a in _exec_action("write branded xstartup " + XSTARTUP, XSTARTUP, _xstartup_content()) { actions.push(a) }
+  actions.push(_file_action("write LarzOS Openbox theme", OB_THEME_DIR + "/themerc", _themerc_content()))
+  actions.push(_file_action("write Openbox config " + OB_RC, OB_RC, _rc_xml_content()))
+  actions.push(_file_action("write LarzOS tint2 panel config", TINT2RC, _tint2rc_content()))
+
+  if not file_exists(WALLPAPER) {
+    actions.push({"desc": "generate LarzOS wallpaper " + WALLPAPER,
+                  "cmd": "convert -size " + d["resolution"] + " gradient:'#0b0f1a'-'#141c2c' " + WALLPAPER,
+                  "skip": false})
+  } else {
+    actions.push({"desc": "wallpaper already generated", "cmd": "", "skip": true})
+  }
+
+  for a in _exec_action("write " + LAUNCHER, LAUNCHER, _launcher_content(d["display"], d["resolution"], d["depth"])) { actions.push(a) }
+
+  if _has_systemd() {
+    actions.push({"desc": "systemd detected - you can also manage this via spec.services[\"vncserver@" +
+                  str(d["display"]) + ".service\"] instead of `larz-gui`", "cmd": "", "skip": true})
+  } else {
+    actions.push({"desc": "no systemd on this host - start/stop the desktop with `larz-gui start|stop|status`",
+                  "cmd": "", "skip": true})
+  }
+
+  let vnc_pw = "/root/.vnc/passwd"
+  if not file_exists(vnc_pw) {
+    actions.push({"desc": "MANUAL STEP: no VNC password set yet - run `vncpasswd` before starting the desktop (not automated on purpose)",
+                  "cmd": "", "skip": false})
+  } else {
+    actions.push({"desc": "VNC password already set", "cmd": "", "skip": true})
+  }
+
+  return actions
+}

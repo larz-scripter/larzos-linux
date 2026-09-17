@@ -67,6 +67,36 @@ write config).
 | `services` | `systemctl enable --now` / `disable --now` to match `services.*` |
 | `audio` | `/etc/pipewire/pipewire.conf.d/99-larzos.conf` from `audio.profile` |
 | `ai` | `/etc/larzos/ai.toml` from `ai.*`, consumed by `larz-aid` |
+| `gui` | branded Openbox/tint2 desktop + VNC config from `gui.*` (see below) |
+
+## The `gui` module
+
+Most LarzOS targets (PRoot-Distro/Termux, minimal cloud boxes) have no
+native display, so the graphical desktop is served over VNC rather than
+assumed to render locally.
+
+- **Packages are not this module's job.** Add `"larz-gui"` (a metapackage
+  in `packages/larz-gui`, pulling in Openbox, tint2, TigerVNC and friends)
+  to `spec.packages`; the existing `packages` module installs it. `gui`
+  only writes config once those binaries exist, and no-ops with a pointer
+  back to `spec.packages` if they don't yet.
+- **Starting the session is not this module's job either**, on purpose:
+  most LarzOS targets (PRoot-Distro/Termux) have no systemd, so this
+  module installs a plain `larz-gui start|stop|status` launcher instead of
+  assuming one. On a host that *does* have systemd, manage
+  `spec.services["vncserver@<display>.service"]` through the existing
+  `services` module instead and skip the launcher.
+- **The VNC password is never generated or written by this module.** Run
+  `vncpasswd` yourself before starting the desktop - `gui`'s plan will
+  keep flagging this as a manual step until you do.
+- `spec.gui = { enabled, display, resolution, depth }` - all optional,
+  defaults are `false`, `1`, `"1366x800"`, `24`.
+
+**Naming note:** `larz-gui` (this module, a graphical desktop) and
+`larz-desktop` (the existing terminal + audio + AI metapackage) are
+unrelated despite the English-word collision - "desktop" in this project
+means "not headless," not "has a window manager." Don't confuse the two
+when reading `spec.packages`.
 
 ## The package format
 

@@ -22,6 +22,7 @@ larzos.system({
   # Resolved against the LarzOS apt repo first, then the base distro.
   "packages": [
     "larz-desktop",       # metapackage: shell + audio + AI manager + Claude Code
+    "larz-gui",           # metapackage: Openbox/tint2 graphical desktop over VNC
     "larz-claude-code",   # `larz code` - Anthropic's terminal coding agent
     "git", "curl", "vim", "firefox",
   ],
@@ -56,6 +57,14 @@ larzos.system({
   "ai": {
     "local_models": ["qwen2.5-coder:7b"],
     "gateway":      "https://gateway.larzos.com",
+  },
+
+  # Branded Openbox/tint2 desktop, served over VNC (most LarzOS targets
+  # have no native display). Run `vncpasswd` once before `larz-gui start`.
+  "gui": {
+    "enabled":    true,
+    "display":    1,
+    "resolution": "1366x800",
   },
 
   # Monthly spend caps, enforced by the OS wallet (larz budget / larz spend).
