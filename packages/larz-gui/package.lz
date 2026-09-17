@@ -1,0 +1,25 @@
+# larz-gui - metapackage that pulls in a lightweight graphical desktop
+# (Openbox + tint2 over TigerVNC). Add "larz-gui" to spec.packages and
+# enable spec.gui to have the *gui* module write the branded theme/config;
+# see docs/design.md.
+#
+# Most LarzOS targets have no native display (PRoot-Distro/Termux, minimal
+# cloud boxes), so this ships a VNC server rather than assuming one exists.
+# `larz-desktop` (terminal + audio + AI) has nothing to do with this - the
+# names collide in English but not in the system; see docs/design.md.
+
+import "larzos/pkg" as pkg
+
+pkg.package({
+  "name":       "larz-gui",
+  "version":    "0.1.0",
+  "summary":    "LarzOS graphical desktop (Openbox + tint2 over VNC)",
+  "arch":       "all",
+  "section":    "x11",
+  "depends": [
+    "dbus-x11", "openbox", "tint2", "pcmanfm", "lxterminal", "rofi",
+    "tigervnc-standalone-server", "imagemagick", "feh",
+  ],
+  "build":   [],
+  "install": [],
+})

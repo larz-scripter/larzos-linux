@@ -27,4 +27,9 @@ larzos.system({
     "local_models": [],
     "gateway": "https://gateway.larzos.com",
   },
+
+  # Add "larz-gui" to packages[] above, then uncomment to get a branded
+  # Openbox/tint2 desktop over VNC (most LarzOS targets have no native
+  # display). Run `vncpasswd` once before starting it with `larz-gui start`.
+  # "gui": { "enabled": true, "display": 1, "resolution": "1366x800" },
 })
