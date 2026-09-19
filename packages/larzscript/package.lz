@@ -12,7 +12,7 @@ let asset = arch == "arm64" ? "larzscript-linux-aarch64" : "larzscript-linux-x86
 
 pkg.package({
   "name":       "larzscript",
-  "version":    "1.40.0",
+  "version":    "1.41.0",
   "summary":    "The money-native Larzscript interpreter (upstream release binary)",
   "arch":       arch,
   "section":    "interpreters",
