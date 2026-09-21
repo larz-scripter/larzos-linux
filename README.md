@@ -54,6 +54,36 @@ Repo line: `deb [signed-by=/usr/share/keyrings/larzos-archive-keyring.gpg] https
 Then edit `/etc/larzos/system.lz`, run `larz-system plan`, then
 `sudo larz-system apply`.
 
+## apt packages: use them on any Debian or Ubuntu
+
+You don't need the whole distro. The LarzOS apt repo is an ordinary signed
+`.deb` repository (amd64 + arm64), so the tools work on any Debian- or
+Ubuntu-family machine. Add it once, then `apt install` what you need:
+
+```sh
+curl -fsSL https://larzos.com/apt/KEY.asc | sudo gpg --dearmor -o /usr/share/keyrings/larzos-archive-keyring.gpg
+echo "deb [signed-by=/usr/share/keyrings/larzos-archive-keyring.gpg] https://larzos.com/apt stable main" | sudo tee /etc/apt/sources.list.d/larzos.list
+sudo apt update
+sudo apt install larzscript larz-system
+```
+
+| Package | What it is | On a non-LarzOS machine |
+|---|---|---|
+| [`larzscript`](https://larzos.com/larzos-linux/apt/larzscript/) | The Larzscript interpreter: one static binary, no dependencies | Safe: one file |
+| [`larzsh`](https://larzos.com/larzos-linux/apt/larzsh/) | Interactive shell with Larzscript builtins; unknown commands fall through to `/bin/sh` | Safe |
+| [`larz`](https://larzos.com/larzos-linux/apt/larz/) | One command for software, system spec, config generations, wallet, AI | Safe (`apply` changes the machine) |
+| [`larz-system`](https://larzos.com/larzos-linux/apt/larz-system/) | Declarative config: `system.lz` -> `plan` -> `apply` | Safe to install; edit the stock `system.lz` (it sets the hostname to `larzos`) before `apply` |
+| [`larz-ai`](https://larzos.com/larzos-linux/apt/larz-ai/) | Local AI router on `127.0.0.1:8199` (gateway or Ollama) | Safe; service not started on install |
+| [`larz-gui`](https://larzos.com/larzos-linux/apt/larz-gui/) | Openbox + tint2 desktop over TigerVNC (metapackage) | Safe: only adds packages |
+| [`larz-claude-code`](https://larzos.com/larzos-linux/apt/larz-claude-code/) | Claude Code via npm + `larz code` wrapper | Writes `/etc/claude-code/CLAUDE.md`; removal also runs `npm uninstall -g` |
+| [`larz-branding`](https://larzos.com/larzos-linux/apt/larz-branding/) | LarzOS identity: os-release, MOTD, GRUB, Plymouth, dpkg vendor | **Rebrands the host**; undo with `larz-rebrand restore` |
+| [`larz-desktop`](https://larzos.com/larzos-linux/apt/larz-desktop/) | Metapackage: all of the above + PipeWire audio | **Rebrands the host** (pulls in `larz-branding`) |
+
+Per-package pages with examples and the exact files each one touches:
+**[larzos.com/larzos-linux/apt/](https://larzos.com/larzos-linux/apt/)**.
+Want to add your own tool? A package is a `package.lz` recipe under
+`packages/<name>/`; see [docs/design.md](docs/design.md).
+
 ## Windows (WSL)
 
 LarzOS ships as a first-class WSL distribution — its own name, icon, first-run
