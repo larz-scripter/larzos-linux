@@ -20,8 +20,14 @@ pkg.package({
   "build": [
     "curl -fsSL https://github.com/larz-scripter/larzscript/releases/latest/download/" + asset + " -o larzscript.bin",
     "test -s larzscript.bin",
+    # the package manager behind `larzscript pkg` - a system package has no per-user
+    # ~/.larzscript to drop it in, so it lives in /usr/share/larzscript, where the
+    # interpreter looks when the per-user copy is missing
+    "curl -fsSL https://raw.githubusercontent.com/larz-scripter/larzscript/main/tools/larzpkg.lz -o larzpkg.lz",
+    "test -s larzpkg.lz",
   ],
   "install": [
     "install -Dm755 larzscript.bin $DESTDIR/usr/bin/larzscript",
+    "install -Dm644 larzpkg.lz $DESTDIR/usr/share/larzscript/larzpkg.lz",
   ],
 })
