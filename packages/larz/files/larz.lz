@@ -17,7 +17,28 @@ let R = "\033[0m"
 fn sh(cmd)  { return run(cmd) }
 fn out(cmd) { return capture(cmd).strip() }
 fn is_root(){ return out("id -u") == "0" }
-fn sudo()   { return is_root() ? "" : "sudo " }
+
+# ---- privilege ----
+# Root needs nothing; anyone else needs a sudo that can actually work. In a rootless
+# environment (the LarzOS Android app runs under proot: no real root, /usr/bin/sudo is not
+# setuid and NoNewPrivs is set) sudo is installed but inert, and calling it only prints
+# "sudo: ... must be owned by uid 0". So decide up front and say what to do instead.
+fn sudo_works() {
+  if sh("command -v sudo >/dev/null 2>&1") != 0 { return false }
+  if out("sed -n 's/^NoNewPrivs:[[:space:]]*//p' /proc/self/status 2>/dev/null") == "1" { return false }
+  return sh("s=$(command -v sudo) && test -u \"$s\" && test \"$(stat -c %u \"$s\")\" = 0") == 0
+}
+fn need_priv() {
+  if is_root() or sudo_works() { return }
+  print("larz: 'larz " + cmd + "' needs administrator rights, and this environment has no working sudo")
+  print("      (you are not root, and sudo can't work here - normal for a rootless setup such as")
+  print("      the LarzOS Android app, which runs under proot).")
+  print("  In the LarzOS app:  switch the terminal to the root shell (the larz/root button), then run it again.")
+  print("  Elsewhere:          run it as root.")
+  exit(1)
+}
+fn sudo()   { need_priv(); return is_root() ? "" : "sudo " }
+fn as_root(a) { need_priv(); if is_root() { return } exit(sh("sudo larz " + join(a, " "))) }
 fn q(s)     { return "'" + s.replace("'", "'\\''") + "'" }
 fn qjoin(xs){ let r = ""; for i in range(len(xs)) { r = r + (i > 0 ? " " : "") + q(xs[i]) } return r }
 fn head(s)  { print(C + "==>" + R + " " + s) }
@@ -102,7 +123,7 @@ if cmd == "help" or cmd == "-h" or cmd == "--help" { usage() }
 # ---- software ----
 else if cmd == "install" or cmd == "add" {
   if len(rest) == 0 { print("larz install <pkg>..."); exit(1) }
-  need("apt-get")
+  need("apt-get"); need_priv()
   # metered packages declare a price in their control's XB-Larz-Price field
   for p in rest {
     let meta = out("apt-cache show " + q(p) + " 2>/dev/null")
@@ -124,7 +145,7 @@ else if cmd == "install" or cmd == "add" {
 }
 else if cmd == "remove" or cmd == "rm" {
   if len(rest) == 0 { print("larz remove <pkg>..."); exit(1) }
-  need("apt-get"); head("removing " + join(rest, " "))
+  need("apt-get"); need_priv(); head("removing " + join(rest, " "))
   exit(sh(sudo() + "apt-get remove -y " + qjoin(rest)))
 }
 else if cmd == "search" or cmd == "find" {
@@ -132,11 +153,11 @@ else if cmd == "search" or cmd == "find" {
   need("apt-cache"); exit(sh("apt-cache search " + qjoin(rest)))
 }
 else if cmd == "update" or cmd == "refresh" {
-  need("apt-get"); head("refreshing package lists")
+  need("apt-get"); need_priv(); head("refreshing package lists")
   let rc = sh(sudo() + "apt-get update"); count_updates(); exit(rc)
 }
 else if cmd == "upgrade" or cmd == "up" {
-  need("apt-get"); head("updating everything installed")
+  need("apt-get"); need_priv(); head("updating everything installed")
   sh(sudo() + "apt-get update")
   let rc = sh(sudo() + "apt-get full-upgrade -y"); count_updates(); exit(rc)
 }
@@ -146,12 +167,12 @@ else if cmd == "list" {
 
 # ---- this machine ----
 else if cmd == "plan"     { need("larz-system"); exit(sh("larz-system plan " + qjoin(rest))) }
-else if cmd == "apply"    { need("larz-system"); head("applying the system spec"); exit(sh(sudo() + "larz-system apply " + qjoin(rest))) }
-else if cmd == "rollback" { need("larz-system"); exit(sh(sudo() + "larz-system rollback " + qjoin(rest))) }
+else if cmd == "apply"    { need("larz-system"); need_priv(); head("applying the system spec"); exit(sh(sudo() + "larz-system apply " + qjoin(rest))) }
+else if cmd == "rollback" { need("larz-system"); need_priv(); exit(sh(sudo() + "larz-system rollback " + qjoin(rest))) }
 else if cmd == "status"   { need("larz-system"); exit(sh("larz-system status " + qjoin(rest))) }
 
 else if cmd == "snapshot" {
-  if not is_root() { exit(sh("sudo larz " + join(a, " "))) }
+  as_root(a)
   let n = gen.create(len(rest) > 0 ? rest[0] : "", "")
   print("saved generation #" + str(n))
 }
@@ -167,7 +188,7 @@ else if cmd == "generations" or cmd == "gens" {
 }
 else if cmd == "switch" {
   if len(rest) == 0 { print("larz switch <n>"); exit(1) }
-  if not is_root() { exit(sh("sudo larz " + join(a, " "))) }
+  as_root(a)
   head("switching to generation #" + rest[0] + " (a pre-switch snapshot is taken)")
   let res = gen.restore(int(rest[0]))
   print(res["ok"] ? "now on generation #" + str(res["n"]) : ("larz: " + res["error"]))
@@ -220,7 +241,7 @@ else if cmd == "budget" {
     print(D + "set: larz budget <category> <amount>   (or a 'budget' block in system.lz)" + R)
   } else {
     if len(rest) < 2 { print("larz budget <category> <amount>"); exit(1) }
-    if not is_root() { exit(sh("sudo larz " + join(a, " "))) }
+    as_root(a)
     let bp = "/etc/larzos/budget.toml"
     let cur = file_exists(bp) ? read_file(bp) : "[budget]\n"
     if not cur.contains("[budget]") { cur = "[budget]\n" + cur }
@@ -286,6 +307,7 @@ else if cmd == "why" {
 }
 else if cmd == "do" {
   if len(rest) == 0 { print("larz do \"<what you want>\""); exit(1) }
+  need_priv()                      # before the AI call is paid for, not after
   let goal = join(rest, " ")
   head("asking the OS how to: " + goal)
   let sys = "You are the LarzOS agent. The user runs Debian-based LarzOS and configures the machine with /etc/larzos/system.lz (Larzscript) plus apt. " +
@@ -354,6 +376,7 @@ else if cmd == "share" {
 }
 else if cmd == "adopt" {
   if len(rest) == 0 { print("larz adopt <id|url>"); exit(1) }
+  need_priv()
   let res = fleet.fetch(rest[0])
   if not res["ok"] { print("larz: " + res["error"]); exit(1) }
   let tmp = "/tmp/larz-adopt.lz"
@@ -371,6 +394,7 @@ else if cmd == "doctor" or cmd == "check" { doctor() }
 else if cmd == "rebrand" {
   need("larz-rebrand")
   let sub = len(rest) > 0 ? rest : ["status"]
+  if sub[0] != "status" { need_priv() }
   exit(sh((sub[0] == "status" ? "" : sudo()) + "larz-rebrand " + qjoin(sub)))
 }
 else if cmd == "version" or cmd == "--version" {
@@ -380,7 +404,7 @@ else if cmd == "version" or cmd == "--version" {
     if v != "" { print("  " + p + " " + v) }
   }
 }
-else if cmd == "apt" { need("apt-get"); exit(sh(sudo() + "apt-get " + qjoin(rest))) }
+else if cmd == "apt" { need("apt-get"); need_priv(); exit(sh(sudo() + "apt-get " + qjoin(rest))) }
 else {
   print("larz: unknown command '" + cmd + "'  (try: larz help)")
   exit(1)
