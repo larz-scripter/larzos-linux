@@ -6,7 +6,7 @@ import "larzos/pkg" as pkg
 
 pkg.package({
   "name":     "larz",
-  "version":  "0.1.0",
+  "version":  "0.1.1",
   "summary":  "The LarzOS command - packages, system spec, AI router, health",
   "arch":     "all",
   "section":  "admin",
