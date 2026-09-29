@@ -38,7 +38,7 @@ install-test: packages
 	test -f /usr/share/larzscript/larzpkg.lz
 	rm -rf /tmp/larzos-install-test && mkdir -p /tmp/larzos-install-test
 	cd /tmp/larzos-install-test && /usr/bin/larzscript pkg install mathx
-	test -f "$$HOME/.larzscript/lib/mathx.lz"
+	test -d "$$HOME/.larzscript/lib/mathx"
 	printf 'import "mathx" as m\nlet x = m.mean([1,2,3])\nprint("install-test-ok")\n' > /tmp/larzos-install-test/check.lz
 	/usr/bin/larzscript /tmp/larzos-install-test/check.lz | grep -q install-test-ok
 	@echo "PASS install-test"
