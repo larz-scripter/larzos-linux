@@ -21,3 +21,6 @@ jobs:
 
       - name: Build packages
         run: make packages && ls -la dist/
+
+      - name: Install-verify larzscript end to end (dpkg -i, then real `larzscript pkg install`)
+        run: make install-test
