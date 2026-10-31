@@ -56,12 +56,12 @@ Then edit `/etc/larzos/system.lz`, run `larz-system plan`, then
 
 ## The diagnostic CLIs
 
-Eight standalone tools, each a single Larzscript file, each read-only, each
+Eleven standalone tools, each a single Larzscript file, each read-only, each
 installable on a stock Debian/Ubuntu box without converting the machine:
 
 ```sh
-sudo apt install larz-ports larz-cron larz-secrets larz-disk \
-                 larz-certs larz-perms larz-net larz-www
+sudo apt install larz-ports larz-cron larz-secrets larz-disk larz-certs \
+                 larz-perms larz-net larz-www larz-dns larz-units larz-logs
 ```
 
 **`larz-ports`** — what is listening, and who can reach it. `ss` lists sockets;
@@ -170,6 +170,59 @@ blocked   critical      400  dated backup copy  (*.bak-*)
                     HTTP 403  /emi-calculator/index.html.bak-2026-09-15
 ```
 
+
+**`larz-dns`** — whether the DNS behind your sites still matches reality. The A
+record against this host's own addresses, and for any domain with MX: SPF (and
+that there is only *one*, since two cancel out), DMARC, DKIM at the common
+selectors, and the Spamhaus DBL.
+
+The blocklist check is the careful part. Spamhaus **refuses queries from public
+resolvers**, and a refusal is an empty answer — indistinguishable from "not
+listed". So before reporting any blocklist result it queries a record that is
+*known to be listed* and checks it comes back. If that control fails, blocklists
+are reported as **UNKNOWN**:
+
+```
+NOTE: this resolver cannot query Spamhaus - the control lookup for
+      dbltest.com.dbl.spamhaus.org returned ""
+      instead of 127.0.1.2. Blocklist status is reported as UNKNOWN
+      rather than clear. Use the host's own resolver, not 8.8.8.8.
+```
+
+A false clean bill of health on deliverability is worse than no answer. DBL also
+answers for *every* subdomain of a listed domain, so the listing is attributed
+to the registrable domain rather than reported once per vhost.
+
+**`larz-units`** — the systemd failure `systemctl --failed` doesn't show. A
+service that crashes and is restarted every minute is "active" every time you
+look at it, and is also not working:
+
+```
+bad   restart loop   worker.service
+      5 restarts, and it is between restarts right now (sub-state
+      auto-restart) - looks active but keeps dying
+```
+
+It also finds services that are enabled but dead, and units stuck activating —
+while excluding the three kinds of unit that are enabled and inactive entirely
+legitimately: `ConditionResult=no` (systemd skipped it deliberately),
+socket-activated (`TriggeredBy` set), and run-once types. Without those
+exclusions the check is pure noise.
+
+**`larz-logs`** — what is filling the logs, and what is actually erroring. A log
+full of one repeated error is a *single broken thing*, not forty thousand
+problems, so error lines are grouped by **shape**: every run of digits becomes
+`#`, collapsing timestamps, pids, ports and client addresses.
+
+```
+/var/log/auth.log - 1326 error line(s) in the last 4000, by shape:
+    343x  sshd[#]: Failed password for root from #.#.#.# port # ssh#
+    252x  sshd[#]: pam_unix(sshd:auth): authentication failure; logname= uid
+```
+
+Two lines of output that say more than a thousand `tail`s. It also reports each
+log's growth since the last run.
+
 ---
 
 ## Other Debian/Ubuntu-family distributions
@@ -272,7 +325,8 @@ examples/              reference machine specs (desktop, server)
 packages/              the distro's own packages (larz-desktop, larz-ai, larzsh,
                        larz-claude-code — `larz code`, Claude Code preinstalled,
                        larz-ports / larz-cron / larz-secrets / larz-disk /
-                       larz-certs / larz-perms / larz-net / larz-www — the
+                       larz-certs / larz-perms / larz-net / larz-www /
+                       larz-dns / larz-units / larz-logs — the eleven
                        read-only diagnostic CLIs)
 windows/               LarzOS.exe — the rebranded WSL distro-launcher + MSIX
 docs/                  design notes and the system.lz schema

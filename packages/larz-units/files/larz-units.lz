@@ -1,0 +1,307 @@
+# larz-units - systemd services that are broken, or quietly flapping.
+#
+# `systemctl --failed` is the obvious check and most people run it. It misses
+# the more interesting cases:
+#
+#   * a service that crashes and gets restarted every minute is "active" every
+#     time you look at it. Nothing is failed. It is also not working.
+#   * a service that is enabled - so somebody meant it to run - and is simply
+#     dead, with no failure recorded.
+#   * a unit stuck in "activating" forever, which is neither active nor failed.
+#
+# Restart counts alone are meaningless without a time base: nine restarts over
+# six months is a healthy service that has been upgraded, and nine restarts in
+# an hour is an outage. So this divides by uptime and reports a rate.
+
+let LOOP_PER_DAY = 3.0          # restarts per day above which a unit is flapping
+
+fn tokens(line) {
+  let out = []
+  for p in line.replace("\t", " ").split(" ") {
+    if p != "" { out.push(p) }
+  }
+  return out
+}
+
+fn is_num(s) {
+  if s == "" { return false }
+  let i = 0
+  while i < len(s) {
+    if not "0123456789".contains(s[i]) { return false }
+    i = i + 1
+  }
+  return true
+}
+
+fn prop(unit, name) {
+  return capture("systemctl show -p " + name + " --value '" + unit + "' 2>/dev/null").strip()
+}
+
+# one call for several properties keeps this to a handful of execs rather than
+# one per property per unit
+fn props(unit, names) {
+  let arg = ""
+  for n in names { arg = arg + " -p " + n }
+  let out = capture("systemctl show" + arg + " '" + unit + "' 2>/dev/null")
+  let d = {}
+  for line in out.split("\n") {
+    let t = line.strip()
+    if not t.contains("=") { continue }
+    let k = t.split("=")[0]
+    d[k] = t[len(k) + 1:len(t)]
+  }
+  return d
+}
+
+fn uptime_days() {
+  let raw = capture("cat /proc/uptime 2>/dev/null").strip()
+  let t = tokens(raw)
+  if len(t) == 0 { return 1.0 }
+  let secs = float(t[0])
+  let days = secs / 86400.0
+  if days < 0.04 { return 0.04 }      # under an hour: avoid dividing by ~0
+  return days
+}
+
+fn one_dp(v) {
+  let whole = int(v)
+  let tenth = int((v - whole) * 10 + 0.5)
+  if tenth >= 10 { whole = whole + 1 tenth = 0 }
+  return str(whole) + "." + str(tenth)
+}
+
+fn service_list(all_units) {
+  let flag = "--state=loaded"
+  let out = capture("systemctl list-units --type=service --all --no-legend --no-pager 2>/dev/null")
+  let names = []
+  for line in out.split("\n") {
+    let t = tokens(line)
+    for p in t {
+      # the bullet column and state words are not unit names
+      if p.ends_with(".service") {
+        names.push(p)
+        break
+      }
+    }
+  }
+  return names
+}
+
+fn last_log(unit) {
+  let out = capture("journalctl -u '" + unit + "' -n 2 --no-pager -o cat 2>/dev/null")
+  for line in out.split("\n") {
+    let t = line.strip()
+    if t != "" { return t[0:140] }
+  }
+  return ""
+}
+
+fn add(hits, sev, kind, unit, detail) {
+  hits.push({"sev": sev, "kind": kind, "unit": unit, "detail": detail})
+  return 0
+}
+
+fn rank(s) {
+  if s == "bad" { return 0 }
+  if s == "warn" { return 1 }
+  return 2
+}
+
+fn jesc(s) {
+  return s.replace("\\", "\\\\").replace("\"", "\\\"")
+}
+
+fn main() {
+  let as_j = false
+  for a in args {
+    if a == "--json" { as_j = true }
+    if a == "-h" or a == "--help" {
+      print("larz-units - systemd services that are broken, or quietly flapping")
+      print("")
+      print("usage: larz-units [--json]")
+      print("")
+      print("Beyond `systemctl --failed`, it reports:")
+      print("  - services restarting often enough to be a loop (restarts per")
+      print("    day since boot, not a raw count)")
+      print("  - services that are enabled but dead, excluding oneshot units")
+      print("    that are supposed to finish and stay inactive")
+      print("  - units stuck in activating, which are neither active nor failed")
+      print("  - units whose last run exited non-zero")
+      print("")
+      print("  --json   machine-readable output")
+      return 0
+    }
+  }
+
+  if capture("command -v systemctl 2>/dev/null").strip() == "" {
+    print("larz-units: systemctl is not present, so there is nothing to check.")
+    print("(This machine does not use systemd - try larz-cron for its schedules.)")
+    return 0
+  }
+
+  let days = uptime_days()
+  let hits = []
+  let checked = 0
+  let flapping = 0
+  let candidates = []
+
+  for unit in service_list(true) {
+    # template units cannot be inspected directly
+    if unit.contains("@.service") { continue }
+    let p = props(unit, ["ActiveState", "SubState", "Result", "NRestarts",
+                         "UnitFileState", "Type", "ExecMainStatus",
+                         "ConditionResult", "TriggeredBy"])
+    if not p.has("ActiveState") { continue }
+    checked = checked + 1
+    let active = p["ActiveState"]
+    let sub = p["SubState"]
+    let result = ""
+    if p.has("Result") { result = p["Result"] }
+    let ufs = ""
+    if p.has("UnitFileState") { ufs = p["UnitFileState"] }
+    let utype = ""
+    if p.has("Type") { utype = p["Type"] }
+    let nr = 0
+    if p.has("NRestarts") {
+      if is_num(p["NRestarts"]) { nr = int(p["NRestarts"]) }
+    }
+
+    if active == "failed" {
+      let d = "result=" + result
+      let lg = last_log(unit)
+      if lg != "" { d = d + " | " + lg }
+      add(hits, "bad", "failed", unit, d)
+      continue
+    }
+
+    # The case `systemctl --failed` never shows: restarting in a loop while
+    # looking active at every instant. "auto-restart" means systemd is
+    # between restarts as we speak, which is the signal itself.
+    let rate = nr / days
+    if sub == "auto-restart" {
+      flapping = flapping + 1
+      add(hits, "bad", "restart loop", unit,
+          str(nr) + " restarts, and it is between restarts right now "
+          + "(sub-state auto-restart) - looks active but keeps dying")
+    }
+    else {
+      if nr > 0 {
+        # confirm by sampling: if the counter moves in a few seconds, it is
+        # looping now rather than having restarted at some point in the past
+        candidates.push({"unit": unit, "nr": nr, "rate": rate})
+      }
+    }
+
+    if active == "activating" and sub != "auto-restart" {
+      add(hits, "warn", "stuck activating", unit,
+          "sub-state " + sub + " - neither active nor failed")
+    }
+
+    # Enabled and inactive is legitimate in three cases, and without them this
+    # check is pure noise on any normal machine.
+    if ufs == "enabled" and active == "inactive" {
+      let cond = ""
+      if p.has("ConditionResult") { cond = p["ConditionResult"] }
+      let trig = ""
+      if p.has("TriggeredBy") { trig = p["TriggeredBy"].strip() }
+      let runonce = utype == "oneshot" or utype == "idle"
+      if cond == "no" {
+        # systemd skipped it on purpose - a condition was not met, e.g.
+        # open-vm-tools on a host that is not a VMware guest
+      }
+      else {
+        if trig != "" {
+          # socket/path/timer activated: inactive is its resting state
+        }
+        else {
+          if runonce or utype == "" {
+            # meant to run and exit
+          }
+          else {
+            if result != "" and result != "success" {
+              add(hits, "bad", "enabled but dead", unit,
+                  "enabled, not running, last result=" + result + " (Type=" + utype + ")")
+            }
+            else {
+              add(hits, "warn", "enabled but not running", unit,
+                  "Type=" + utype + ", exited cleanly - fine if it is meant to be run-once")
+            }
+          }
+        }
+      }
+    }
+
+    if result != "" and result != "success" and active != "failed" {
+      add(hits, "warn", "last run did not succeed", unit, "result=" + result)
+    }
+  }
+
+  # Second pass over only the units that have ever restarted (a handful, not
+  # all 200), so the cost is one short sleep plus a few property reads.
+  if len(candidates) > 0 {
+    sleep(4)
+    for c in candidates {
+      let now_nr = prop(c["unit"], "NRestarts")
+      let n2 = c["nr"]
+      if is_num(now_nr) { n2 = int(now_nr) }
+      if n2 > c["nr"] {
+        flapping = flapping + 1
+        add(hits, "bad", "restart loop", c["unit"],
+            "restarted " + str(n2 - c["nr"]) + " more time(s) during a 4-second "
+            + "sample (" + str(n2) + " total) - it is looping now")
+      }
+      else {
+        if c["nr"] >= 5 {
+          add(hits, "warn", "has restarted", c["unit"],
+              str(c["nr"]) + " restarts since boot " + one_dp(days)
+              + " days ago (" + one_dp(c["rate"]) + "/day), stable right now")
+        }
+      }
+    }
+  }
+
+  let sorted_hits = []
+  for h in hits {
+    let i = 0
+    while i < len(sorted_hits) {
+      if rank(h["sev"]) < rank(sorted_hits[i]["sev"]) { break }
+      i = i + 1
+    }
+    sorted_hits.insert(i, h)
+  }
+
+  if as_j {
+    let out = "[\n"
+    let f = true
+    for h in sorted_hits {
+      if not f { out = out + ",\n" }
+      f = false
+      out = out + "  {\"severity\": \"" + h["sev"] + "\", \"kind\": \"" + jesc(h["kind"])
+          + "\", \"unit\": \"" + jesc(h["unit"]) + "\", \"detail\": \"" + jesc(h["detail"]) + "\"}"
+    }
+    print(out + "\n]")
+    return 0
+  }
+
+  if len(sorted_hits) == 0 {
+    print("All " + str(checked) + " service unit(s) look healthy.")
+    print("(Checked failures, restart loops, enabled-but-dead, stuck activating")
+    print(" and non-zero exits. Uptime " + one_dp(days) + " days.)")
+    return 0
+  }
+
+  print("SEVERITY  WHAT                      UNIT")
+  print("".ljust(80, "-"))
+  let bad = 0
+  for h in sorted_hits {
+    if h["sev"] == "bad" { bad = bad + 1 }
+    print(h["sev"].ljust(10) + h["kind"].ljust(26) + h["unit"])
+    print("".ljust(10) + h["detail"])
+    print("")
+  }
+  print(str(len(sorted_hits)) + " finding(s) across " + str(checked)
+        + " service(s), " + str(bad) + " serious; uptime " + one_dp(days) + " days")
+  return 0
+}
+
+main()

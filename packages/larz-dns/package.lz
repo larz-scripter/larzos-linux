@@ -1,0 +1,24 @@
+# larz-dns - DNS and mail-authentication drift for the domains this host serves
+#
+# DNS is where a server quietly stops matching reality: a domain still points
+# at the host you migrated off, SPF exists but DMARC never got added, two SPF
+# records cancel each other out, or the domain is on a blocklist and every
+# message is rejected while the logs say "sent". The blocklist check queries a
+# known-listed control record first, because Spamhaus refuses public resolvers
+# and a refusal is indistinguishable from "not listed".
+
+import "larzos/pkg" as pkg
+
+pkg.package({
+  "name":    "larz-dns",
+  "version": "0.1.0",
+  "summary": "DNS and mail-authentication drift for the domains this host serves",
+  "arch":    "all",
+  "section": "net",
+  "depends": ["larzscript", "dnsutils"],
+  "build":   [],
+  "install": [
+    "install -Dm755 files/larz-dns    $DESTDIR/usr/bin/larz-dns",
+    "install -Dm644 files/larz-dns.lz $DESTDIR/usr/lib/larzos/larz-dns.lz",
+  ],
+})
