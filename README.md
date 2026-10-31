@@ -172,6 +172,51 @@ blocked   critical      400  dated backup copy  (*.bak-*)
 
 ---
 
+## Other Debian/Ubuntu-family distributions
+
+LarzOS packages are ordinary signed `.deb`s, so the diagnostic CLIs install on
+any apt-based system &mdash; Debian, Ubuntu, Linux Mint, Pop!_OS, Raspberry Pi
+OS, Kali, Devuan, Proxmox and the rest of the family. The install is the same
+three lines everywhere:
+
+```sh
+curl -fsSL https://larzos.com/apt/KEY.asc | sudo gpg --dearmor -o /usr/share/keyrings/larzos-archive-keyring.gpg
+echo "deb [signed-by=/usr/share/keyrings/larzos-archive-keyring.gpg] https://larzos.com/apt stable main" | sudo tee /etc/apt/sources.list.d/larzos.list
+sudo apt update && sudo apt install larz-ports larz-cron larz-secrets larz-disk larz-certs larz-perms larz-net larz-www
+```
+
+`stable` here is *our* suite name, not your distribution's &mdash; the same line
+is correct on every release. `apt` pulls in `larzscript` (a statically linked
+binary, so no glibc floor), plus `curl` for `larz-www` and `openssl` for
+`larz-certs`.
+
+**Verified by installing and running them, not by assumption:**
+
+| Distribution | dpkg | Result |
+|---|---|---|
+| Ubuntu 24.04 LTS | 1.22 | 8/8 install and run |
+| Ubuntu 22.04 LTS | 1.21 | 8/8 install and run |
+| Ubuntu 20.04 LTS | 1.19 | 8/8 install and run |
+| Debian 13 (trixie) | 1.22 | 8/8 install and run |
+| Debian 12 (bookworm) | 1.21 | 8/8 install and run |
+| Debian 11 (bullseye) | 1.20 | 8/8 run (its own archive is EOL, so the repo was added by hand) |
+
+Architectures: `amd64` and `arm64`. The tools themselves are `all` &mdash;
+architecture-independent Larzscript &mdash; so the only per-arch component is the
+interpreter. A 32-bit `armhf` Raspberry Pi is **not** covered yet, because no
+`armhf` interpreter is published.
+
+**Degrading gracefully.** These are read-only tools, and anything missing is
+reported rather than guessed at. Without systemd, `larz-cron` lists the cron
+sources and simply finds no timers. In a container, `larz-ports` and `larz-net`
+correctly report that namespace's sockets. And where a tool genuinely cannot
+answer, it says so and exits non-zero instead of printing a clean result: with
+`curl` removed, `larz-www` refuses rather than reporting "nothing is reachable
+over HTTP", and a failed request is counted as **could not be checked**, never
+as *blocked*.
+
+---
+
 ## Windows (WSL)
 
 LarzOS ships as a first-class WSL distribution — its own name, icon, first-run

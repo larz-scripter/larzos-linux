@@ -14,7 +14,7 @@ pkg.package({
   "summary": "Files in a web root the server will hand to anyone",
   "arch":    "all",
   "section": "web",
-  "depends": ["larzscript"],
+  "depends": ["larzscript", "curl"],
   "build":   [],
   "install": [
     "install -Dm755 files/larz-www    $DESTDIR/usr/bin/larz-www",

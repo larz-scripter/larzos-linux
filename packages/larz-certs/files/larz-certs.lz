@@ -176,6 +176,23 @@ fn sort_by_days(rows) {
   return out
 }
 
+# A missing openssl made this print "No TLS certificates found" - a clean bill
+# of health it had no way to establish. Refuse instead.
+fn need(cmd) {
+  let found = capture("command -v " + cmd + " 2>/dev/null").strip()
+  if found == "" {
+    print("larz-certs: " + cmd + " is not installed, so no certificate can be read.")
+    print("Install it with:  sudo apt install " + cmd)
+    print("")
+    print("Refusing to report a result, because \"nothing found\" here would mean")
+    print("\"could not look\" - and those are not the same answer.")
+    # exit() here rather than returning: `return N` from main() is not the
+    # process exit status, so a refusal would otherwise report success.
+    exit(2)
+  }
+  return true
+}
+
 fn main() {
   let as_j = false
   let check_served = false
@@ -198,6 +215,7 @@ fn main() {
     }
   }
 
+  if not need("openssl") { return 2 }
   let now = time()
   let rows = []
   for p in cert_paths() {
