@@ -59,32 +59,69 @@ fn tokens(line) {
 
 # ------------------------------------------------- find roots and hostnames
 
-fn vhosts() {
-  # Pair each DocumentRoot with a ServerName, because the file has to be
-  # requested with the right Host header to reach the vhost that serves it.
+# The files the web servers actually load.
+#
+# Two things made the first version read the wrong configuration entirely:
+#
+#   * Debian enables a vhost by SYMLINKING sites-available/x.conf into
+#     sites-enabled, and `grep -r` does not follow symlinks found during
+#     traversal. So every real vhost was invisible.
+#   * What `grep -r` *did* find were the regular files left beside them -
+#     larzos-ssl.conf.bak-20261026 and friends. Apache ignores those (it
+#     includes only sites-enabled/*.conf), but the scan was reading them, so it
+#     reported hostnames and document roots from a stale config.
+#
+# Enumerating the files by glob and reading each one individually fixes both,
+# and also stops a ServerName in one file pairing with a DocumentRoot in the
+# next.
+fn conf_files() {
   let out = []
-  let cfg = capture("grep -rhE '^[[:space:]]*(ServerName|DocumentRoot|server_name|root)[[:space:]]' /etc/apache2/sites-enabled /etc/nginx/sites-enabled /etc/nginx/conf.d 2>/dev/null")
-  let name = ""
-  for line in cfg.split("\n") {
-    let t = tokens(line)
-    if len(t) < 2 { continue }
-    let key = t[0].lower()
-    let val = t[1].replace(";", "").strip()
-    if key == "servername" or key == "server_name" {
-      if name == "" { name = val }
-      continue
+  # apache2.conf has "IncludeOptional sites-enabled/*.conf" - the .conf suffix
+  # is what makes a file live, so anything else is deliberately skipped
+  for pat in ["/etc/apache2/sites-enabled/*.conf",
+              "/etc/nginx/sites-enabled/*",
+              "/etc/nginx/conf.d/*.conf"] {
+    let listing = capture("ls -1 " + pat + " 2>/dev/null")
+    for line in listing.split("\n") {
+      let f = line.strip()
+      if f == "" { continue }
+      # nginx's sites-enabled has no suffix rule, so filter editor leftovers
+      if f.contains(".bak") or f.ends_with("~") or f.contains(".dpkg-") { continue }
+      if f.contains(".pre-") or f.ends_with(".orig") or f.ends_with(".save") { continue }
+      out.push(f)
     }
-    if key == "documentroot" or key == "root" {
-      if not val.starts_with("/") { continue }
-      if not file_exists(val) { continue }
-      let host = name
-      if host == "" { host = "localhost" }
-      let dup = false
-      for o in out {
-        if o["root"] == val { dup = true }
+  }
+  return out
+}
+
+fn vhosts() {
+  let out = []
+  for f in conf_files() {
+    # one file at a time: a ServerName must only pair with a DocumentRoot from
+    # the same file. Naming the file explicitly also follows the symlink.
+    let cfg = capture("grep -hE '^[[:space:]]*(ServerName|DocumentRoot|server_name|root)[[:space:]]' '"
+                      + f + "' 2>/dev/null")
+    let name = ""
+    for line in cfg.split("\n") {
+      let t = tokens(line)
+      if len(t) < 2 { continue }
+      let key = t[0].lower()
+      let val = t[1].replace(";", "").strip()
+      if key == "servername" or key == "server_name" {
+        if name == "" { name = val }
+        continue
       }
-      if not dup { out.push({"root": val, "host": host}) }
-      name = ""
+      if key == "documentroot" or key == "root" {
+        if not val.starts_with("/") { continue }
+        if not file_exists(val) { continue }
+        let host = name
+        if host == "" { host = "localhost" }
+        let dup = false
+        for o in out {
+          if o["root"] == val { dup = true }
+        }
+        if not dup { out.push({"root": val, "host": host}) }
+      }
     }
   }
   return out

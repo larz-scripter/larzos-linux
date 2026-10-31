@@ -2,6 +2,35 @@
 
 Newest first. Mirrored to <https://larzos.com/larzos-linux/>.
 
+## 2026-10-31 - 0.1.20: larz-www was reading the wrong Apache config entirely
+
+Found while wiring the diagnostic CLIs into a daily health report: `larz-www`
+discovered document roots with `grep -r` over `sites-enabled`, and **`grep -r`
+does not follow symlinks** found during traversal. Debian's `a2ensite` enables
+a vhost by *symlinking* `sites-available/x.conf` into `sites-enabled`, so on a
+normally-administered Debian or Ubuntu box every real vhost was invisible.
+
+What it read instead were the only regular files in that directory - the
+`larzos-ssl.conf.bak-20261026` style copies left beside them. Apache ignores
+those (it includes only `sites-enabled/*.conf`), but the scan was parsing them,
+so it reported a **stale** hostname (`www.larzos.com` instead of `larzos.com`)
+and missed a whole document root. A `.php.bak` that curl fetched with a 200 was
+not reported at all.
+
+Fixed by enumerating the files the servers actually load - `ls` by glob, which
+follows symlinks - and parsing **each file separately**, so a `ServerName` in
+one file can no longer pair with a `DocumentRoot` in the next. Non-`.conf`
+leftovers are skipped explicitly.
+
+Verified: the tool now finds both document roots on the host, with the correct
+hostnames from the live configs, and correctly reports a served `*.php.bak` as
+`EXPOSED (200)` where it previously reported nothing. The three-way positive
+control for the health report - port-baseline drift, a served sensitive file,
+a world-writable path - now fires on all three.
+
+Lesson worth keeping: `grep -r` is the wrong tool for any Debian config
+directory, because the Debian convention for "enabled" *is* a symlink.
+
 ## 2026-10-31 - 0.1.19: every package was uninstallable on Debian 11 and older
 
 Asked whether the diagnostic CLIs work on other apt distributions, the answer
