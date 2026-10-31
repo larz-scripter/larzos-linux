@@ -1,0 +1,291 @@
+# larz-www - files in a web root that the web server will hand to anyone.
+#
+# The distinction this tool exists for: a sensitive file *on disk* in a document
+# root is untidy, and a sensitive file the server actually *returns over HTTP*
+# is a disclosure. Those are different problems with different fixes, and every
+# "find the .env in your webroot" one-liner only tells you the first one.
+#
+# So for each candidate it does both: locates the file, then requests it
+# through the web server and reports what came back. A 403 means your deny rule
+# works. A 200 means the contents are public right now.
+#
+# It requests against 127.0.0.1 with a Host header by default, which tests the
+# origin itself rather than whatever a CDN in front of it decides to cache.
+
+# Patterns worth checking, with why. Editor and backup copies are first because
+# a *.bak of a .php file is served as plain text - the source, with its
+# credentials, rather than the executed page.
+let PATTERNS = [
+  ["*.bak", "backup copy", "critical"],
+  ["*.bak-*", "dated backup copy", "critical"],
+  ["*.php.bak*", "backup of a PHP file - served as source", "critical"],
+  ["*.orig", "merge/backup leftover", "critical"],
+  ["*.save", "editor save file", "critical"],
+  ["*.old", "old copy", "critical"],
+  ["*~", "editor backup", "critical"],
+  ["*.swp", "vim swap file", "high"],
+  [".env", "environment file - usually holds credentials", "critical"],
+  [".env.*", "environment file variant", "critical"],
+  ["*.sql", "database dump", "critical"],
+  ["*.sql.gz", "compressed database dump", "critical"],
+  [".htpasswd", "password file", "critical"],
+  ["id_rsa", "private key", "critical"],
+  ["*.pem", "key or certificate", "high"],
+  ["*.key", "key material", "high"],
+  ["composer.lock", "dependency manifest - exposes versions", "medium"],
+  ["package.json", "dependency manifest - exposes versions", "medium"],
+  ["*.log", "log file", "high"],
+  [".DS_Store", "directory listing leak", "medium"],
+  ["config.php.txt", "config as plain text", "critical"],
+  ["*.inc", "include served as source", "high"],
+]
+
+# Directories whose mere presence is the finding
+let DIRS = [
+  [".git", "git repository - full source and history", "critical"],
+  [".svn", "subversion metadata", "critical"],
+  [".hg", "mercurial metadata", "critical"],
+  ["node_modules", "dependency tree", "medium"],
+  ["vendor", "dependency tree", "medium"],
+]
+
+fn tokens(line) {
+  let out = []
+  for p in line.replace("\t", " ").split(" ") {
+    if p != "" { out.push(p) }
+  }
+  return out
+}
+
+# ------------------------------------------------- find roots and hostnames
+
+fn vhosts() {
+  # Pair each DocumentRoot with a ServerName, because the file has to be
+  # requested with the right Host header to reach the vhost that serves it.
+  let out = []
+  let cfg = capture("grep -rhE '^[[:space:]]*(ServerName|DocumentRoot|server_name|root)[[:space:]]' /etc/apache2/sites-enabled /etc/nginx/sites-enabled /etc/nginx/conf.d 2>/dev/null")
+  let name = ""
+  for line in cfg.split("\n") {
+    let t = tokens(line)
+    if len(t) < 2 { continue }
+    let key = t[0].lower()
+    let val = t[1].replace(";", "").strip()
+    if key == "servername" or key == "server_name" {
+      if name == "" { name = val }
+      continue
+    }
+    if key == "documentroot" or key == "root" {
+      if not val.starts_with("/") { continue }
+      if not file_exists(val) { continue }
+      let host = name
+      if host == "" { host = "localhost" }
+      let dup = false
+      for o in out {
+        if o["root"] == val { dup = true }
+      }
+      if not dup { out.push({"root": val, "host": host}) }
+      name = ""
+    }
+  }
+  return out
+}
+
+# ------------------------------------------------------- fetch through HTTP
+
+fn http_code(host, path) {
+  # -k because an origin behind a proxy often has a cert for a different name;
+  # the status code is what matters here, not the certificate.
+  let c = capture("curl -s -o /dev/null -k --max-time 12 -w '%{http_code}' -H 'Host: "
+                  + host + "' 'http://127.0.0.1" + path + "' 2>/dev/null").strip()
+  if c == "" { return "---" }
+  return c
+}
+
+fn url_path(root, full) {
+  if not full.starts_with(root) { return "" }
+  let rest = full[len(root):len(full)]
+  if not rest.starts_with("/") { rest = "/" + rest }
+  return rest
+}
+
+fn jesc(s) {
+  return s.replace("\\", "\\\\").replace("\"", "\\\"")
+}
+
+fn sev_rank(s) {
+  if s == "critical" { return 0 }
+  if s == "high" { return 1 }
+  if s == "medium" { return 2 }
+  return 3
+}
+
+fn main() {
+  let as_j = false
+  let per_pattern = 3
+  let only_root = ""
+  let i = 0
+  while i < len(args) {
+    let a = args[i]
+    if a == "--json" { as_j = true }
+    else {
+      if a == "-h" or a == "--help" {
+        print("larz-www - files in a web root the server will hand to anyone")
+        print("")
+        print("usage: larz-www [DOCROOT] [--sample N] [--json]")
+        print("")
+        print("  DOCROOT     check one root (default: every one in the")
+        print("              Apache and nginx configs)")
+        print("  --sample N  how many files to actually request per pattern")
+        print("              (default 3) - a root with 2,000 *.bak files does")
+        print("              not need 2,000 HTTP requests to prove the point")
+        print("  --json      machine-readable output")
+        print("")
+        print("Every candidate is requested through the web server, so the")
+        print("report says whether a file is merely present (403/404) or")
+        print("actually being served (200).")
+        return 0
+      }
+      if a == "--sample" {
+        if i + 1 < len(args) { per_pattern = int(args[i + 1]) }
+      }
+      if a.starts_with("/") { only_root = a }
+    }
+    i = i + 1
+  }
+
+  let roots = vhosts()
+  if only_root != "" { roots = [{"root": only_root, "host": "localhost"}] }
+  if len(roots) == 0 {
+    print("No document roots found in the Apache or nginx configuration.")
+    return 0
+  }
+
+  let hits = []
+  for v in roots {
+    let root = v["root"]
+    let host = v["host"]
+
+    for p in PATTERNS {
+      let found = capture("find '" + root + "' -xdev -type f -name '" + p[0]
+                          + "' 2>/dev/null | head -400")
+      let paths = []
+      for f in found.split("\n") {
+        if f.strip() != "" { paths.push(f.strip()) }
+      }
+      if len(paths) == 0 { continue }
+
+      # request a sample; report the total so the scale is visible
+      let tested = 0
+      let served = 0
+      let examples = []
+      for f in paths {
+        if tested >= per_pattern { break }
+        let up = url_path(root, f)
+        if up == "" { continue }
+        let code = http_code(host, up)
+        tested = tested + 1
+        if code == "200" {
+          served = served + 1
+          examples.push({"path": up, "code": code})
+        }
+        else {
+          if len(examples) == 0 { examples.push({"path": up, "code": code}) }
+        }
+      }
+      hits.push({"sev": p[2], "kind": p[1], "pattern": p[0], "root": root,
+                 "host": host, "count": len(paths), "tested": tested,
+                 "served": served, "examples": examples})
+    }
+
+    for d in DIRS {
+      let found = capture("find '" + root + "' -xdev -maxdepth 4 -type d -name '"
+                          + d[0] + "' 2>/dev/null | head -20")
+      let paths = []
+      for f in found.split("\n") {
+        if f.strip() != "" { paths.push(f.strip()) }
+      }
+      if len(paths) == 0 { continue }
+      let served = 0
+      let examples = []
+      let tested = 0
+      for f in paths {
+        if tested >= per_pattern { break }
+        let up = url_path(root, f)
+        if up == "" { continue }
+        # for a repo the telltale file is the one worth requesting
+        let probe = up + "/config"
+        if d[0] != ".git" { probe = up + "/" }
+        let code = http_code(host, probe)
+        tested = tested + 1
+        if code == "200" {
+          served = served + 1
+          examples.push({"path": probe, "code": code})
+        }
+        else {
+          if len(examples) == 0 { examples.push({"path": probe, "code": code}) }
+        }
+      }
+      hits.push({"sev": d[1], "kind": d[1], "pattern": d[0] + "/", "root": root,
+                 "host": host, "count": len(paths), "tested": tested,
+                 "served": served, "examples": examples})
+      hits[len(hits) - 1]["sev"] = d[2]
+    }
+  }
+
+  # a pattern that is actually served outranks one that is merely present,
+  # whatever its nominal severity - that is the difference between a tidy-up
+  # and an incident
+  let sorted_hits = []
+  for h in hits {
+    let i2 = 0
+    while i2 < len(sorted_hits) {
+      let a_live = h["served"] > 0
+      let b_live = sorted_hits[i2]["served"] > 0
+      if a_live and not b_live { break }
+      if a_live == b_live and sev_rank(h["sev"]) < sev_rank(sorted_hits[i2]["sev"]) { break }
+      i2 = i2 + 1
+    }
+    sorted_hits.insert(i2, h)
+  }
+
+  if as_j {
+    let out = "[\n"
+    let first = true
+    for h in sorted_hits {
+      if not first { out = out + ",\n" }
+      first = false
+      out = out + "  {\"severity\": \"" + h["sev"] + "\", \"pattern\": \"" + jesc(h["pattern"])
+          + "\", \"what\": \"" + jesc(h["kind"]) + "\", \"docroot\": \"" + jesc(h["root"])
+          + "\", \"host\": \"" + jesc(h["host"]) + "\", \"files_on_disk\": " + str(h["count"])
+          + ", \"tested\": " + str(h["tested"]) + ", \"served_200\": " + str(h["served"])
+          + ", \"example\": \"" + jesc(h["examples"][0]["path"]) + "\", \"example_code\": \""
+          + h["examples"][0]["code"] + "\"}"
+    }
+    print(out + "\n]")
+    return 0
+  }
+
+  let exposed = 0
+  let present = 0
+  print("STATUS    SEVERITY  ON DISK  WHAT")
+  print("".ljust(84, "-"))
+  for h in sorted_hits {
+    let status = "blocked"
+    if h["served"] > 0 { status = "EXPOSED" exposed = exposed + 1 }
+    else { present = present + 1 }
+    print(status.ljust(10) + h["sev"].ljust(10) + str(h["count"]).rjust(7) + "  "
+          + h["kind"] + "  (" + h["pattern"] + ")")
+    let ex = h["examples"][0]
+    print("".ljust(20) + h["root"] + "  via Host: " + h["host"])
+    print("".ljust(20) + "HTTP " + ex["code"] + "  " + ex["path"])
+    print("")
+  }
+  print(str(len(sorted_hits)) + " pattern(s) present: " + str(exposed)
+        + " actually served, " + str(present) + " blocked by the server")
+  if exposed == 0 {
+    print("Nothing sensitive is reachable over HTTP, though the files are still on disk.")
+  }
+  return 0
+}
+
+main()

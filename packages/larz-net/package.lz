@@ -1,0 +1,23 @@
+# larz-net - Outbound connections grouped by peer and process
+#
+# larz-ports answers the inbound question: what can reach me. This answers the
+# outbound one: what am I reaching, and which process is doing it. That is the
+# half you need when a box is quietly phoning somewhere. Connections are
+# grouped by peer and process, and peers inside the network are separated from
+# peers on the internet.
+
+import "larzos/pkg" as pkg
+
+pkg.package({
+  "name":    "larz-net",
+  "version": "0.1.0",
+  "summary": "Outbound connections grouped by peer and process",
+  "arch":    "all",
+  "section": "net",
+  "depends": ["larzscript"],
+  "build":   [],
+  "install": [
+    "install -Dm755 files/larz-net    $DESTDIR/usr/bin/larz-net",
+    "install -Dm644 files/larz-net.lz $DESTDIR/usr/lib/larzos/larz-net.lz",
+  ],
+})

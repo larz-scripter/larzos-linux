@@ -1,0 +1,319 @@
+# larz-certs - every TLS certificate on this machine, when it expires, and
+# whether the one being served is the one on disk.
+#
+# Two different outages hide here. The obvious one is a certificate nobody
+# renewed. The quieter one is a certificate that renewed perfectly and was
+# never loaded, because the web server was not reloaded afterwards - the file
+# on disk is fine, every monitoring check that reads the file is fine, and
+# visitors still get the expired one.
+#
+# So this reports both: the expiry of each certificate on disk, and, with
+# --served, the expiry of the certificate actually answering on :443. When
+# those disagree it also looks at the issuer, because a CDN in front of the
+# origin is the innocent explanation and a stale web server is not.
+
+let SEARCH = ["/etc/letsencrypt/live", "/etc/ssl/localcerts", "/etc/ssl/private",
+              "/etc/nginx/ssl", "/etc/apache2/ssl", "/etc/pki/tls/certs"]
+
+fn tokens(line) {
+  let out = []
+  for p in line.replace("\t", " ").split(" ") {
+    if p != "" { out.push(p) }
+  }
+  return out
+}
+
+fn is_num(s) {
+  if s == "" { return false }
+  let i = 0
+  while i < len(s) {
+    if not "0123456789".contains(s[i]) { return false }
+    i = i + 1
+  }
+  return true
+}
+
+fn field(out, key) {
+  # openssl prints "key=value"; take everything after the first "="
+  for line in out.split("\n") {
+    let t = line.strip()
+    if t.starts_with(key + "=") {
+      return t[len(key) + 1:len(t)].strip()
+    }
+  }
+  return ""
+}
+
+# "Nov  9 08:09:26 2026 GMT" -> epoch. date(1) does the calendar work; writing
+# a month table and leap-year logic here would be more code and more wrong.
+fn to_epoch(s) {
+  if s == "" { return 0 }
+  let out = capture("date -d '" + s.replace("'", "") + "' +%s 2>/dev/null").strip()
+  if is_num(out) { return int(out) }
+  return 0
+}
+
+fn days_until(epoch, now) {
+  if epoch == 0 { return -99999 }
+  return int((epoch - now) / 86400)
+}
+
+fn verdict(days) {
+  if days <= -99999 { return "UNKNOWN" }
+  if days < 0 { return "EXPIRED" }
+  if days < 7 { return "CRITICAL" }
+  if days < 30 { return "WARN" }
+  return "OK"
+}
+
+# the CN out of an openssl subject line, which looks like
+# "subject=CN = larzos.com" or "subject=/CN=larzos.com"
+fn cn_of(subject) {
+  let s = subject
+  if s.contains("CN = ") { s = s.split("CN = ")[1] }
+  else {
+    if s.contains("CN=") { s = s.split("CN=")[1] }
+    else { return "" }
+  }
+  if s.contains(",") { s = s.split(",")[0] }
+  if s.contains("/") { s = s.split("/")[0] }
+  return s.strip()
+}
+
+fn issuer_short(issuer) {
+  let s = issuer
+  if s.contains("O = ") {
+    s = s.split("O = ")[1]
+    if s.contains(",") { s = s.split(",")[0] }
+    return s.strip()
+  }
+  let c = cn_of(issuer)
+  if c != "" { return c }
+  return "unknown"
+}
+
+# ------------------------------------------------------------- find on disk
+
+fn add_unique(list, item) {
+  for x in list {
+    if x == item { return 0 }
+  }
+  list.push(item)
+  return 0
+}
+
+fn cert_paths() {
+  let paths = []
+  # certbot's canonical layout first
+  for base in SEARCH {
+    if not file_exists(base) { continue }
+    for name in listdir(base) {
+      let d = base + "/" + name
+      for leaf in ["/cert.pem", "/fullchain.pem"] {
+        if file_exists(d + leaf) {
+          add_unique(paths, d + leaf)
+          break
+        }
+      }
+      if name.ends_with(".pem") or name.ends_with(".crt") or name.ends_with(".cer") {
+        add_unique(paths, d)
+      }
+    }
+  }
+  # whatever the web servers are actually configured to load - the only list
+  # that reflects reality rather than convention
+  let cfg = capture("grep -rhoE '^[[:space:]]*(SSLCertificateFile|ssl_certificate)[[:space:]]+[^;]+' /etc/apache2 /etc/nginx 2>/dev/null")
+  for line in cfg.split("\n") {
+    let t = tokens(line)
+    if len(t) < 2 { continue }
+    let p = t[1].replace(";", "").strip()
+    if p.starts_with("/") and file_exists(p) { add_unique(paths, p) }
+  }
+  return paths
+}
+
+fn read_cert(path, now) {
+  let out = capture("openssl x509 -noout -enddate -startdate -subject -issuer -in '"
+                    + path + "' 2>/dev/null")
+  if out.strip() == "" { return {} }
+  let na = field(out, "notAfter")
+  let ep = to_epoch(na)
+  let d = days_until(ep, now)
+  let subj = field(out, "subject")
+  let iss = field(out, "issuer")
+  return {"path": path, "cn": cn_of(subj), "issuer": issuer_short(iss),
+          "self_signed": cn_of(subj) == cn_of(iss) and cn_of(subj) != "",
+          "not_after": na, "epoch": ep, "days": d, "verdict": verdict(d)}
+}
+
+# ------------------------------------------------------- what is served now
+
+fn served_cert(host, now) {
+  let out = capture("timeout 12 openssl s_client -connect " + host
+                    + ":443 -servername " + host
+                    + " </dev/null 2>/dev/null | openssl x509 -noout -enddate -issuer 2>/dev/null")
+  if out.strip() == "" { return {} }
+  let na = field(out, "notAfter")
+  let ep = to_epoch(na)
+  return {"not_after": na, "epoch": ep, "days": days_until(ep, now),
+          "issuer": issuer_short(field(out, "issuer"))}
+}
+
+fn jesc(s) {
+  return s.replace("\\", "\\\\").replace("\"", "\\\"")
+}
+
+fn sort_by_days(rows) {
+  let out = []
+  for r in rows {
+    let i = 0
+    while i < len(out) {
+      if r["days"] < out[i]["days"] { break }
+      i = i + 1
+    }
+    out.insert(i, r)
+  }
+  return out
+}
+
+fn main() {
+  let as_j = false
+  let check_served = false
+  for a in args {
+    if a == "--json" { as_j = true }
+    if a == "--served" { check_served = true }
+    if a == "-h" or a == "--help" {
+      print("larz-certs - TLS certificate expiry, on disk and as actually served")
+      print("")
+      print("usage: larz-certs [--served] [--json]")
+      print("")
+      print("  --served  also connect to each certificate's host on :443 and")
+      print("            compare what is served with what is on disk. This")
+      print("            catches a certificate that renewed but was never")
+      print("            loaded, which no file-based check can see.")
+      print("  --json    machine-readable output")
+      print("")
+      print("verdicts: EXPIRED, CRITICAL (<7 days), WARN (<30 days), OK")
+      return 0
+    }
+  }
+
+  let now = time()
+  let rows = []
+  for p in cert_paths() {
+    let c = read_cert(p, now)
+    if c.has("path") { rows.push(c) }
+  }
+  # cert.pem and fullchain.pem are the same certificate; a config pointing at
+  # one and certbot's layout offering the other produced two rows for it.
+  let seen = {}
+  let uniq = []
+  for r in rows {
+    let k = r["cn"] + "@" + str(r["epoch"])
+    if seen.has(k) {
+      seen[k]["also"].push(r["path"])
+      continue
+    }
+    r["also"] = []
+    seen[k] = r
+    uniq.push(r)
+  }
+  rows = sort_by_days(uniq)
+
+  if check_served {
+    for r in rows {
+      let host = r["cn"]
+      if host == "" or host.starts_with("*") { continue }
+      let s = served_cert(host, now)
+      if not s.has("epoch") {
+        r["served"] = "unreachable"
+        continue
+      }
+      r["served"] = s["not_after"]
+      r["served_days"] = s["days"]
+      r["served_issuer"] = s["issuer"]
+      if s["epoch"] == r["epoch"] { r["match"] = "same" }
+      else {
+        if s["issuer"] != r["issuer"] {
+          # a different issuer means something else terminates TLS - a CDN or
+          # a load balancer - so the origin file is simply not what visitors
+          # see. That is a deployment fact, not a fault.
+          r["match"] = "different-terminator"
+        } else {
+          if s["epoch"] < r["epoch"] { r["match"] = "STALE-SERVED" }
+          else { r["match"] = "newer-served" }
+        }
+      }
+    }
+  }
+
+  if as_j {
+    let out = "[\n"
+    let first = true
+    for r in rows {
+      if not first { out = out + ",\n" }
+      first = false
+      out = out + "  {\"path\": \"" + jesc(r["path"]) + "\", \"common_name\": \""
+          + jesc(r["cn"]) + "\", \"issuer\": \"" + jesc(r["issuer"])
+          + "\", \"not_after\": \"" + jesc(r["not_after"]) + "\", \"days_remaining\": "
+          + str(r["days"]) + ", \"verdict\": \"" + r["verdict"]
+          + "\", \"self_signed\": " + str(r["self_signed"]).lower()
+      if r.has("served") {
+        out = out + ", \"served_not_after\": \"" + jesc(str(r["served"])) + "\""
+        if r.has("match") { out = out + ", \"served_match\": \"" + r["match"] + "\"" }
+        if r.has("served_issuer") { out = out + ", \"served_issuer\": \"" + jesc(r["served_issuer"]) + "\"" }
+      }
+      out = out + "}"
+    }
+    print(out + "\n]")
+    return 0
+  }
+
+  if len(rows) == 0 {
+    print("No TLS certificates found in the usual places or in any web server config.")
+    return 0
+  }
+
+  print("VERDICT   DAYS  EXPIRES                   COMMON NAME")
+  print("".ljust(78, "-"))
+  let bad = 0
+  for r in rows {
+    if r["verdict"] != "OK" { bad = bad + 1 }
+    let dd = "  ?  "
+    if r["days"] > -99999 { dd = str(r["days"]).rjust(5) }
+    print(r["verdict"].ljust(10) + dd + "  " + r["not_after"].ljust(26) + r["cn"])
+    let tag = "[" + r["issuer"] + "]"
+    if r["self_signed"] { tag = "[" + r["issuer"] + " - SELF-SIGNED]" }
+    print("".ljust(17) + r["path"] + "  " + tag)
+    for extra in r["also"] {
+      print("".ljust(17) + "also at " + extra)
+    }
+    if r.has("served") and not r.has("match") {
+      print("".ljust(17) + "could not connect to " + r["cn"] + ":443 to compare")
+    }
+    if r.has("match") {
+      if r["match"] == "same" {
+        print("".ljust(17) + "served on :443 matches this file")
+      }
+      else {
+        if r["match"] == "STALE-SERVED" {
+          print("".ljust(17) + "*** SERVED CERT IS OLDER: " + str(r["served"]))
+          print("".ljust(17) + "*** renewed on disk but never loaded - reload the web server")
+        }
+        else {
+          if r["match"] == "different-terminator" {
+            print("".ljust(17) + "served by " + r["served_issuer"] + " instead (CDN or proxy in front), expires " + str(r["served"]))
+          }
+          else {
+            print("".ljust(17) + "served cert differs: " + str(r["served"]))
+          }
+        }
+      }
+    }
+    print("")
+  }
+  print(str(len(rows)) + " certificate(s), " + str(bad) + " needing attention")
+  return 0
+}
+
+main()

@@ -1,0 +1,298 @@
+# larz-net - what this machine is talking to, and which process is doing it.
+#
+# larz-ports answers the inbound question: what can reach me. This answers the
+# outbound one: what am I reaching, and why. That is the half you need when a
+# box is quietly phoning somewhere - a leftover agent, a telemetry endpoint
+# nobody approved, a crypto miner, a service still pointed at an old host.
+#
+# `ss -tnp` shows the same sockets, but it mixes inbound and outbound together
+# and gives you raw addresses. This separates the two directions, groups the
+# connections by peer and process so a hundred sockets become a short list, and
+# resolves the public peers so the list reads as names instead of numbers.
+
+let HEXD = "0123456789abcdef"
+
+# TCP states as /proc writes them
+let STATES = {"01": "ESTABLISHED", "02": "SYN_SENT", "03": "SYN_RECV",
+              "04": "FIN_WAIT1", "05": "FIN_WAIT2", "06": "TIME_WAIT",
+              "07": "CLOSE", "08": "CLOSE_WAIT", "09": "LAST_ACK",
+              "0A": "LISTEN", "0B": "CLOSING"}
+
+fn hexval(ch) {
+  let c = ch.lower()
+  let i = 0
+  while i < 16 {
+    if HEXD[i] == c { return i }
+    i = i + 1
+  }
+  return 0
+}
+
+fn hex_to_int(h) {
+  let n = 0
+  let i = 0
+  while i < len(h) {
+    n = n * 16 + hexval(h[i])
+    i = i + 1
+  }
+  return n
+}
+
+# /proc stores the IPv4 address in host byte order, so the octets are reversed
+fn hex_to_ipv4(h) {
+  let o1 = hex_to_int(h[0] + h[1])
+  let o2 = hex_to_int(h[2] + h[3])
+  let o3 = hex_to_int(h[4] + h[5])
+  let o4 = hex_to_int(h[6] + h[7])
+  return str(o4) + "." + str(o3) + "." + str(o2) + "." + str(o1)
+}
+
+fn hex_to_ipv6(h) {
+  let allzero = true
+  let i = 0
+  while i < len(h) {
+    if h[i] != "0" { allzero = false }
+    i = i + 1
+  }
+  if allzero { return "::" }
+  if h.lower().starts_with("0000000000000000ffff0000") {
+    return hex_to_ipv4(h[24] + h[25] + h[26] + h[27] + h[28] + h[29] + h[30] + h[31])
+  }
+  if h.lower() == "00000000000000000000000001000000" { return "::1" }
+  return "[v6]"
+}
+
+fn fields(line) {
+  let out = []
+  for p in line.replace("\t", " ").split(" ") {
+    if p != "" { out.push(p) }
+  }
+  return out
+}
+
+# RFC1918 and friends. A peer inside the network is a different kind of fact
+# from a peer on the internet, and conflating them hides the interesting one.
+fn is_private(ip) {
+  if ip.starts_with("127.") or ip == "::1" { return true }
+  if ip.starts_with("10.") { return true }
+  if ip.starts_with("192.168.") { return true }
+  if ip.starts_with("169.254.") { return true }
+  if ip.starts_with("fe80") or ip.starts_with("fc") or ip.starts_with("fd") { return true }
+  if ip.starts_with("172.") {
+    let parts = ip.split(".")
+    if len(parts) > 1 {
+      let b = hex_to_int("0")
+      b = int(parts[1])
+      if b >= 16 and b <= 31 { return true }
+    }
+  }
+  return false
+}
+
+fn inode_owners() {
+  let map = {}
+  let out = capture("for p in /proc/[0-9]*; do pid=${p#/proc/}; for f in $p/fd/*; do t=$(readlink $f 2>/dev/null); case $t in socket:*) echo \"${t#socket:[}|$pid\";; esac; done; done 2>/dev/null")
+  for line in out.split("\n") {
+    if line == "" { continue }
+    let bits = line.split("|")
+    if len(bits) < 2 { continue }
+    let ino = bits[0].replace("]", "")
+    if map.has(ino) { continue }
+    map[ino] = bits[1]
+  }
+  return map
+}
+
+fn cmd_for_pid(pid) {
+  return capture("cat /proc/" + pid + "/comm 2>/dev/null").strip()
+}
+
+fn collect(path, is6, owners, listening) {
+  let rows = []
+  let raw = ""
+  raw = read_file(path)
+  let lines = raw.split("\n")
+  let i = 1
+  while i < len(lines) {
+    let f = fields(lines[i])
+    i = i + 1
+    if len(f) < 10 { continue }
+    let st = f[3].upper()
+    if st == "0A" { continue }               # listeners belong to larz-ports
+    let la = f[1].split(":")
+    let ra = f[2].split(":")
+    if len(la) < 2 or len(ra) < 2 { continue }
+    let lport = hex_to_int(la[1])
+    let rport = hex_to_int(ra[1])
+    if rport == 0 { continue }
+    let rip = ""
+    if is6 { rip = hex_to_ipv6(ra[0]) } else { rip = hex_to_ipv4(ra[0]) }
+    if rip == "::" { continue }
+
+    # A socket whose LOCAL port is one we listen on is somebody calling in;
+    # anything else is us calling out. Without this split the list is just
+    # "sockets" and answers neither question.
+    let dir = "out"
+    if listening.has(str(lport)) { dir = "in" }
+
+    let who = "-"
+    if owners.has(f[9]) {
+      let pid = owners[f[9]]
+      who = pid + "/" + cmd_for_pid(pid)
+    }
+    let state = st
+    if STATES.has(st) { state = STATES[st] }
+    rows.push({"peer": rip, "port": rport, "lport": lport, "dir": dir,
+               "state": state, "who": who, "private": is_private(rip)})
+    }
+  return rows
+}
+
+fn listening_ports() {
+  let set = {}
+  for p in ["/proc/net/tcp", "/proc/net/tcp6"] {
+    if not file_exists(p) { continue }
+    let raw = ""
+    raw = read_file(p)
+    let lines = raw.split("\n")
+    let i = 1
+    while i < len(lines) {
+      let f = fields(lines[i])
+      i = i + 1
+      if len(f) < 4 { continue }
+      if f[3].upper() != "0A" { continue }
+      let la = f[1].split(":")
+      if len(la) < 2 { continue }
+      set[str(hex_to_int(la[1]))] = true
+    }
+  }
+  return set
+}
+
+fn rdns(ip) {
+  let out = capture("getent hosts " + ip + " 2>/dev/null | head -1").strip()
+  if out == "" { return "" }
+  let f = fields(out)
+  if len(f) < 2 { return "" }
+  return f[1]
+}
+
+fn jesc(s) {
+  return s.replace("\\", "\\\\").replace("\"", "\\\"")
+}
+
+fn main() {
+  let as_j = false
+  let want = "out"
+  let do_rdns = true
+  for a in args {
+    if a == "--json" { as_j = true }
+    if a == "--in" { want = "in" }
+    if a == "--all" { want = "all" }
+    if a == "--no-dns" { do_rdns = false }
+    if a == "-h" or a == "--help" {
+      print("larz-net - what this machine is talking to, grouped by peer and process")
+      print("")
+      print("usage: larz-net [--in | --all] [--no-dns] [--json]")
+      print("")
+      print("  (default)  outbound connections only - what this box is reaching")
+      print("  --in       inbound connections instead - who is reaching it")
+      print("  --all      both directions")
+      print("  --no-dns   skip reverse lookups (faster, offline-safe)")
+      print("  --json     machine-readable output")
+      print("")
+      print("Peers inside the network are shown separately from peers on the")
+      print("internet; the public ones are what you usually came to look at.")
+      return 0
+    }
+  }
+
+  let owners = inode_owners()
+  let listening = listening_ports()
+  let rows = []
+  rows.extend(collect("/proc/net/tcp", false, owners, listening))
+  if file_exists("/proc/net/tcp6") {
+    rows.extend(collect("/proc/net/tcp6", true, owners, listening))
+  }
+
+  # group by peer+port+process: a browser or a connection pool opens dozens of
+  # sockets to one place, and a hundred near-identical lines hides the shape
+  let groups = {}
+  let order = []
+  for r in rows {
+    if want != "all" and r["dir"] != want { continue }
+    let k = r["peer"] + "|" + str(r["port"]) + "|" + r["who"] + "|" + r["dir"]
+    if groups.has(k) {
+      groups[k]["count"] = groups[k]["count"] + 1
+      continue
+    }
+    r["count"] = 1
+    r["host"] = ""
+    groups[k] = r
+    order.push(k)
+  }
+
+  let out_rows = []
+  for k in order { out_rows.push(groups[k]) }
+
+  if do_rdns {
+    let cache = {}
+    for g in out_rows {
+      if g["private"] { continue }
+      if cache.has(g["peer"]) { g["host"] = cache[g["peer"]] continue }
+      let h = rdns(g["peer"])
+      cache[g["peer"]] = h
+      g["host"] = h
+    }
+  }
+
+  # public peers first - they are the reason to run this
+  let sorted_rows = []
+  for g in out_rows {
+    let i = 0
+    while i < len(sorted_rows) {
+      if not g["private"] and sorted_rows[i]["private"] { break }
+      if g["private"] == sorted_rows[i]["private"] and g["count"] > sorted_rows[i]["count"] { break }
+      i = i + 1
+    }
+    sorted_rows.insert(i, g)
+  }
+
+  if as_j {
+    let out = "[\n"
+    let first = true
+    for g in sorted_rows {
+      if not first { out = out + ",\n" }
+      first = false
+      out = out + "  {\"peer\": \"" + jesc(g["peer"]) + "\", \"port\": " + str(g["port"])
+          + ", \"direction\": \"" + g["dir"] + "\", \"state\": \"" + g["state"]
+          + "\", \"process\": \"" + jesc(g["who"]) + "\", \"sockets\": " + str(g["count"])
+          + ", \"private\": " + str(g["private"]).lower()
+          + ", \"hostname\": \"" + jesc(g["host"]) + "\"}"
+    }
+    print(out + "\n]")
+    return 0
+  }
+
+  if len(sorted_rows) == 0 {
+    print("No " + want + "bound connections right now.")
+    return 0
+  }
+
+  print("PEER                      PORT  N  PROCESS           WHERE")
+  print("".ljust(92, "-"))
+  let pub = 0
+  for g in sorted_rows {
+    if not g["private"] { pub = pub + 1 }
+    let where = g["host"]
+    if g["private"] { where = "(internal)" }
+    if where == "" { where = "-" }
+    print(g["peer"].ljust(26) + str(g["port"]).rjust(5) + str(g["count"]).rjust(3)
+          + "  " + g["who"].ljust(18) + where)
+  }
+  print("")
+  print(str(len(sorted_rows)) + " peer(s), " + str(pub) + " on the public internet")
+  return 0
+}
+
+main()

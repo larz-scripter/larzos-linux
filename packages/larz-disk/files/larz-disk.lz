@@ -1,0 +1,330 @@
+# larz-disk - what is actually eating the disk, and how much of it you can
+# delete safely.
+#
+# `df` says the disk is full. `du` says which directory is big. Neither tells
+# you the thing you actually want to know at 2am: how much of this is junk I
+# can remove right now. This reports the heavy directories and files like du
+# does, then separates out the space that is *reclaimable* - package caches,
+# rotated logs, backup copies, build caches, the journal - and totals it.
+
+fn pad2(n) {
+  let s = str(n)
+  if len(s) < 2 { return "0" + s }
+  return s
+}
+
+# sizes come back from du/find in kibibytes
+# one decimal place, rounded rather than truncated: truncating printed du's
+# 1.9G as 1.8G, which reads like a different number rather than a rounding.
+fn one_dp(v, suffix) {
+  let whole = int(v)
+  let tenth = int((v - whole) * 10 + 0.5)
+  if tenth >= 10 {
+    whole = whole + 1
+    tenth = 0
+  }
+  return str(whole) + "." + str(tenth) + suffix
+}
+
+fn human(kb) {
+  if kb < 1024 { return str(kb) + "K" }
+  let mb = kb / 1024
+  if mb < 1024 { return one_dp(mb, "M") }
+  return one_dp(mb / 1024, "G")
+}
+
+fn tokens(line) {
+  let out = []
+  for p in line.replace("\t", " ").split(" ") {
+    if p != "" { out.push(p) }
+  }
+  return out
+}
+
+fn is_num(s) {
+  if s == "" { return false }
+  let i = 0
+  while i < len(s) {
+    if not "0123456789".contains(s[i]) { return false }
+    i = i + 1
+  }
+  return true
+}
+
+# ------------------------------------------------------------------ overview
+
+fn filesystems() {
+  let rows = []
+  # -x keeps this to real filesystems; tmpfs and overlay noise is not what
+  # anyone means by "the disk is full".
+  let out = capture("df -P -k -x tmpfs -x devtmpfs -x squashfs -x overlay 2>/dev/null")
+  let lines = out.split("\n")
+  let i = 1
+  while i < len(lines) {
+    let f = tokens(lines[i])
+    i = i + 1
+    if len(f) < 6 { continue }
+    if not is_num(f[1]) { continue }
+    let total = int(f[1])
+    let used = int(f[2])
+    let avail = int(f[3])
+    let pct = 0
+    # df's percentage is used/(used+avail), rounded up - it excludes the
+    # reserved blocks, so dividing by the raw total reads ~3 points low.
+    let base = used + avail
+    if base > 0 { pct = int((used * 100 + base - 1) / base) }
+    rows.push({"dev": f[0], "mount": f[5], "total": total, "used": used,
+               "avail": avail, "pct": pct})
+  }
+  return rows
+}
+
+# -------------------------------------------------------------- heavy things
+
+fn big_dirs(root, n) {
+  let rows = []
+  # one du pass, depth-limited: a full-depth du on a large tree is the slow
+  # thing people are trying to avoid by running this at all.
+  let out = capture("du -x -k --max-depth=2 '" + root + "' 2>/dev/null | sort -rn | head -" + str(n + 1))
+  for line in out.split("\n") {
+    if line == "" { continue }
+    let f = tokens(line)
+    if len(f) < 2 { continue }
+    if not is_num(f[0]) { continue }
+    let path = f[1]
+    let j = 2
+    while j < len(f) { path = path + " " + f[j] j = j + 1 }
+    if path == root { continue }
+    rows.push({"kb": int(f[0]), "path": path})
+  }
+  return rows
+}
+
+fn big_files(root, n) {
+  let rows = []
+  let out = capture("find '" + root + "' -xdev -type f -size +20M -printf '%k %p\\n' 2>/dev/null | sort -rn | head -" + str(n))
+  for line in out.split("\n") {
+    if line == "" { continue }
+    let f = tokens(line)
+    if len(f) < 2 { continue }
+    if not is_num(f[0]) { continue }
+    let path = f[1]
+    let j = 2
+    while j < len(f) { path = path + " " + f[j] j = j + 1 }
+    rows.push({"kb": int(f[0]), "path": path})
+  }
+  return rows
+}
+
+# ------------------------------------------------------------- reclaimable
+#
+# Each entry is a category a person can act on, with the exact command. Only
+# things that are genuinely safe to delete on a running system are listed - no
+# "rm -rf /var/log", no touching live databases.
+
+fn kb_of(cmd) {
+  let out = capture(cmd).strip()
+  if out == "" { return 0 }
+  let f = tokens(out)
+  if len(f) < 1 { return 0 }
+  if not is_num(f[0]) { return 0 }
+  return int(f[0])
+}
+
+fn reclaimable() {
+  let rows = []
+
+  let apt = kb_of("du -sk /var/cache/apt/archives 2>/dev/null")
+  if apt > 1024 {
+    rows.push({"what": "apt package cache", "kb": apt,
+               "cmd": "sudo apt clean"})
+  }
+
+  # rotated and compressed logs. The live log is deliberately excluded.
+  let oldlog = kb_of("find /var/log -type f \\( -name '*.gz' -o -name '*.xz' -o -name '*.[0-9]' -o -name '*.old' \\) -printf '%k\\n' 2>/dev/null | awk '{s+=$1} END {print s+0}'")
+  if oldlog > 1024 {
+    rows.push({"what": "rotated/compressed logs in /var/log", "kb": oldlog,
+               "cmd": "sudo journalctl --rotate && sudo find /var/log -name '*.gz' -delete"})
+  }
+
+  let jrnl = kb_of("du -sk /var/log/journal 2>/dev/null")
+  if jrnl > 51200 {
+    rows.push({"what": "systemd journal", "kb": jrnl,
+               "cmd": "sudo journalctl --vacuum-size=200M"})
+  }
+
+  # *.bak-* copies are this estate's own habit and they add up; they are also
+  # a disclosure risk when they sit in a web root (see larz-www).
+  let baks = kb_of("find / -xdev -type f \\( -name '*.bak' -o -name '*.bak-*' -o -name '*.orig' -o -name '*~' -o -name '*.dpkg-old' \\) -printf '%k\\n' 2>/dev/null | awk '{s+=$1} END {print s+0}'")
+  if baks > 1024 {
+    rows.push({"what": "backup/editor copies (*.bak, *.orig, *~)", "kb": baks,
+               "cmd": "find / -xdev -name '*.bak-*' -mtime +30 -delete   # review first"})
+  }
+
+  let pyc = kb_of("find / -xdev -type d -name '__pycache__' -printf '%k\\n' 2>/dev/null | awk '{s+=$1} END {print s+0}'")
+  let pycf = kb_of("find / -xdev -type f -name '*.pyc' -printf '%k\\n' 2>/dev/null | awk '{s+=$1} END {print s+0}'")
+  if pyc + pycf > 1024 {
+    rows.push({"what": "Python bytecode caches", "kb": pyc + pycf,
+               "cmd": "find / -xdev -name '__pycache__' -type d -exec rm -rf {} +"})
+  }
+
+  for c in [["/root/.cache/pip", "pip download cache", "rm -rf /root/.cache/pip"],
+            ["/root/.npm/_cacache", "npm cache", "npm cache clean --force"],
+            ["/root/.cache/ms-playwright", "Playwright browsers", "rm -rf /root/.cache/ms-playwright"]] {
+    let sz = kb_of("du -sk '" + c[0] + "' 2>/dev/null")
+    if sz > 10240 { rows.push({"what": c[1], "kb": sz, "cmd": c[2]}) }
+  }
+
+  # old kernels are usually the single biggest easy win on a long-lived box
+  let kern = capture("dpkg -l 'linux-image-[0-9]*' 2>/dev/null | awk '/^ii/ {print $2}' | wc -l").strip()
+  if is_num(kern) {
+    if int(kern) > 2 {
+      rows.push({"what": kern + " kernel images installed (2 is enough)", "kb": 0,
+                 "cmd": "sudo apt autoremove --purge"})
+    }
+  }
+
+  let docker = capture("docker system df --format '{{.Reclaimable}}' 2>/dev/null | head -1").strip()
+  if docker != "" and not docker.starts_with("0B") {
+    rows.push({"what": "docker reclaimable (" + docker + ")", "kb": 0,
+               "cmd": "docker system prune -a"})
+  }
+
+  return rows
+}
+
+fn sort_desc(rows) {
+  let out = []
+  for r in rows {
+    let i = 0
+    while i < len(out) {
+      if r["kb"] > out[i]["kb"] { break }
+      i = i + 1
+    }
+    out.insert(i, r)
+  }
+  return out
+}
+
+fn jesc(s) {
+  return s.replace("\\", "\\\\").replace("\"", "\\\"")
+}
+
+fn main() {
+  let root = "/"
+  let as_j = false
+  let n = 10
+  let i = 0
+  while i < len(args) {
+    let a = args[i]
+    if a == "--json" { as_j = true }
+    else {
+      if a == "-h" or a == "--help" {
+        print("larz-disk - what is eating the disk, and what you can safely delete")
+        print("")
+        print("usage: larz-disk [PATH] [--top N] [--json]")
+        print("")
+        print("  PATH      where to look for heavy directories (default: /)")
+        print("  --top N   how many entries per section (default: 10)")
+        print("  --json    machine-readable output")
+        print("")
+        print("The reclaimable section only lists things that are safe to")
+        print("remove on a running system, each with the command to do it.")
+        return 0
+      }
+      if a == "--top" {
+        if i + 1 < len(args) {
+          if is_num(args[i + 1]) { n = int(args[i + 1]) }
+        }
+      }
+      if not a.starts_with("-") and not is_num(a) { root = a }
+    }
+    i = i + 1
+  }
+
+  let fs = filesystems()
+  let dirs = big_dirs(root, n)
+  let files = big_files(root, n)
+  let recl = sort_desc(reclaimable())
+
+  let total_recl = 0
+  for r in recl { total_recl = total_recl + r["kb"] }
+
+  if as_j {
+    let out = "{\n  \"filesystems\": ["
+    let first = true
+    for f in fs {
+      if not first { out = out + "," }
+      first = false
+      out = out + "\n    {\"mount\": \"" + jesc(f["mount"]) + "\", \"used_kb\": "
+          + str(f["used"]) + ", \"avail_kb\": " + str(f["avail"]) + ", \"percent\": "
+          + str(f["pct"]) + "}"
+    }
+    out = out + "\n  ],\n  \"big_dirs\": ["
+    first = true
+    for d in dirs {
+      if not first { out = out + "," }
+      first = false
+      out = out + "\n    {\"path\": \"" + jesc(d["path"]) + "\", \"kb\": " + str(d["kb"]) + "}"
+    }
+    out = out + "\n  ],\n  \"big_files\": ["
+    first = true
+    for d in files {
+      if not first { out = out + "," }
+      first = false
+      out = out + "\n    {\"path\": \"" + jesc(d["path"]) + "\", \"kb\": " + str(d["kb"]) + "}"
+    }
+    out = out + "\n  ],\n  \"reclaimable\": ["
+    first = true
+    for r in recl {
+      if not first { out = out + "," }
+      first = false
+      out = out + "\n    {\"what\": \"" + jesc(r["what"]) + "\", \"kb\": " + str(r["kb"])
+          + ", \"command\": \"" + jesc(r["cmd"]) + "\"}"
+    }
+    out = out + "\n  ],\n  \"reclaimable_total_kb\": " + str(total_recl) + "\n}"
+    print(out)
+    return 0
+  }
+
+  print("FILESYSTEMS")
+  print("".ljust(74, "-"))
+  for f in fs {
+    let bar = ""
+    let filled = int(f["pct"] / 5)
+    let k = 0
+    while k < 20 {
+      if k < filled { bar = bar + "#" } else { bar = bar + "." }
+      k = k + 1
+    }
+    print(f["mount"].ljust(22) + bar + " " + str(f["pct"]).rjust(3) + "%  "
+          + human(f["used"]) + " used, " + human(f["avail"]) + " free")
+  }
+
+  print("")
+  print("HEAVIEST DIRECTORIES under " + root)
+  print("".ljust(74, "-"))
+  for d in dirs { print(human(d["kb"]).rjust(8) + "  " + d["path"]) }
+
+  print("")
+  print("LARGEST FILES (over 20M)")
+  print("".ljust(74, "-"))
+  if len(files) == 0 { print("  none") }
+  for d in files { print(human(d["kb"]).rjust(8) + "  " + d["path"]) }
+
+  print("")
+  print("RECLAIMABLE - safe to remove on a running system")
+  print("".ljust(74, "-"))
+  if len(recl) == 0 { print("  nothing obvious") }
+  for r in recl {
+    let sz = "   ?    "
+    if r["kb"] > 0 { sz = human(r["kb"]).rjust(8) }
+    print(sz + "  " + r["what"])
+    print("".ljust(10) + "$ " + r["cmd"])
+  }
+  print("")
+  print("About " + human(total_recl) + " is reclaimable without touching anything live.")
+  return 0
+}
+
+main()

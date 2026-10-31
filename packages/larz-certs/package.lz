@@ -1,0 +1,24 @@
+# larz-certs - TLS certificate expiry, on disk and as actually served
+#
+# Two outages hide here. The obvious one is a certificate nobody renewed. The
+# quieter one is a certificate that renewed perfectly and was never loaded,
+# because the web server was not reloaded - the file on disk is fine, every
+# check that reads the file is fine, and visitors still get the old one. This
+# reports both, and distinguishes a CDN in front of the origin from a stale
+# web server by comparing issuers.
+
+import "larzos/pkg" as pkg
+
+pkg.package({
+  "name":    "larz-certs",
+  "version": "0.1.0",
+  "summary": "TLS certificate expiry, on disk and as actually served",
+  "arch":    "all",
+  "section": "admin",
+  "depends": ["larzscript"],
+  "build":   [],
+  "install": [
+    "install -Dm755 files/larz-certs    $DESTDIR/usr/bin/larz-certs",
+    "install -Dm644 files/larz-certs.lz $DESTDIR/usr/lib/larzos/larz-certs.lz",
+  ],
+})
