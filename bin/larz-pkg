@@ -73,7 +73,11 @@ if cmd == "list" {
 
   run("mkdir -p dist")
   let out = "dist/" + d["name"] + "_" + d["version"] + "_" + d["arch"] + ".deb"
-  if run("dpkg-deb --build --root-owner-group " + stage + " " + out) != 0 { die("dpkg-deb failed") }
+  # -Zxz, not the host default: dpkg-deb on a recent host defaults to zstd,
+  # which dpkg could not read until 1.21.18 (Debian 12 / Ubuntu 22.04). That
+  # made every package fail on older apt systems with "uses unknown
+  # compression for member control.tar.zst". xz works on every dpkg since 2009.
+  if run("dpkg-deb --build -Zxz --root-owner-group " + stage + " " + out) != 0 { die("dpkg-deb failed") }
   print("")
   print("built " + out)
 } else {

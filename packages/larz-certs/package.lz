@@ -15,7 +15,7 @@ pkg.package({
   "summary": "TLS certificate expiry, on disk and as actually served",
   "arch":    "all",
   "section": "admin",
-  "depends": ["larzscript"],
+  "depends": ["larzscript", "openssl"],
   "build":   [],
   "install": [
     "install -Dm755 files/larz-certs    $DESTDIR/usr/bin/larz-certs",

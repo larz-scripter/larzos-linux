@@ -2,6 +2,47 @@
 
 Newest first. Mirrored to <https://larzos.com/larzos-linux/>.
 
+## 2026-10-31 - 0.1.19: every package was uninstallable on Debian 11 and older
+
+Asked whether the diagnostic CLIs work on other apt distributions, the answer
+turned out to be "not as widely as they should have". Three real packaging
+defects, all found by installing into clean containers rather than by reasoning
+about it.
+
+- **Every LarzOS .deb was zstd-compressed.** `dpkg-deb --build` with no `-Z`
+  flag takes the *build host's* default, which on Ubuntu 24.04 is zstd - and
+  dpkg could not read zstd until 1.21.18 (Debian 12 / Ubuntu 22.04). On
+  anything older every package failed with the thoroughly unhelpful
+  `uses unknown compression for member 'control.tar.zst'`. `bin/larz-pkg` now
+  passes **`-Zxz`**, understood by every dpkg since 2009. The `larzscript` deb
+  got *smaller* in the process (2,057,630 -> 1,931,560 bytes), and both the
+  amd64 and arm64 interpreter packages were rebuilt. Debian 11 (dpkg 1.20.14)
+  and Ubuntu 20.04 (dpkg 1.19.7) now install and run everything.
+- **`larz-www` needed `curl` and `larz-certs` needed `openssl`, and neither
+  declared it.** Both are priority `optional` on Debian, so a minimal install
+  does not have them. Worse than failing: both failed *silently with a false
+  all-clear*. Without curl, `larz-www` printed `HTTP ---` for every probe and
+  concluded **"Nothing sensitive is reachable over HTTP"**; without openssl,
+  `larz-certs` reported **"No TLS certificates found"** with a certificate
+  sitting right there. On a security tool that is the worst possible failure
+  mode. Both now declare the dependency *and* check for the command at
+  startup, printing why they cannot answer and exiting 2.
+- **`curl` reports `000`, not an empty string, on a refused connection.** The
+  first version of the guard only caught empty output, so in a container with
+  no web server `larz-www` still read `000` as "not 200" and therefore
+  "blocked" - another false all-clear. A request that did not complete is now
+  its own state, **UNKNOWN**, counted separately, and the summary refuses to
+  say "nothing is reachable" when any probe failed.
+- **`return N` from `main()` is not the process exit status.** The refusal paths
+  exited 0, so a cron check would have read them as success. They call
+  `exit(2)` now.
+
+Verified by installing and running, on Ubuntu 24.04 / 22.04 / 20.04 and Debian
+13 / 12 / 11: 8/8 tools install and run on each. The `larzscript` binary is
+statically linked, so there is no glibc floor - the floor was always dpkg's
+compression support. Still no `armhf` interpreter, so 32-bit Raspberry Pi OS
+remains uncovered.
+
 ## 2026-10-31 - five more diagnostic CLIs, and the outage the first one found
 
 Released 0.1.17: `larz-disk`, `larz-certs`, `larz-perms`, `larz-net`,

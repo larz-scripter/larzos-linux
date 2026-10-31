@@ -97,7 +97,9 @@ fn http_code(host, path) {
   # the status code is what matters here, not the certificate.
   let c = capture("curl -s -o /dev/null -k --max-time 12 -w '%{http_code}' -H 'Host: "
                   + host + "' 'http://127.0.0.1" + path + "' 2>/dev/null").strip()
-  if c == "" { return "---" }
+  # curl reports "000" on a refused connection or a timeout. That is not a
+  # status code and must never be read as "the server blocked it".
+  if c == "" or c == "000" { return "---" }
   return c
 }
 
@@ -117,6 +119,23 @@ fn sev_rank(s) {
   if s == "high" { return 1 }
   if s == "medium" { return 2 }
   return 3
+}
+
+# Without curl every probe returned "---" and the summary still concluded
+# "nothing is reachable over HTTP" - a false all-clear on a disclosure check.
+fn need(cmd) {
+  let found = capture("command -v " + cmd + " 2>/dev/null").strip()
+  if found == "" {
+    print("larz-www: " + cmd + " is not installed, so nothing can be requested.")
+    print("Install it with:  sudo apt install " + cmd)
+    print("")
+    print("Refusing to report a result: without a request this tool cannot tell")
+    print("a blocked file from a served one, which is the whole question.")
+    # exit() here rather than returning: `return N` from main() is not the
+    # process exit status, so a refusal would otherwise report success.
+    exit(2)
+  }
+  return true
 }
 
 fn main() {
@@ -153,6 +172,7 @@ fn main() {
     i = i + 1
   }
 
+  if not need("curl") { return 2 }
   let roots = vhosts()
   if only_root != "" { roots = [{"root": only_root, "host": "localhost"}] }
   if len(roots) == 0 {
@@ -267,12 +287,18 @@ fn main() {
 
   let exposed = 0
   let present = 0
+  let unknown = 0
   print("STATUS    SEVERITY  ON DISK  WHAT")
   print("".ljust(84, "-"))
   for h in sorted_hits {
     let status = "blocked"
     if h["served"] > 0 { status = "EXPOSED" exposed = exposed + 1 }
-    else { present = present + 1 }
+    else {
+      # "---" means the request itself did not complete, so this says nothing
+      # about whether the file is reachable
+      if h["examples"][0]["code"] == "---" { status = "UNKNOWN" unknown = unknown + 1 }
+      else { present = present + 1 }
+    }
     print(status.ljust(10) + h["sev"].ljust(10) + str(h["count"]).rjust(7) + "  "
           + h["kind"] + "  (" + h["pattern"] + ")")
     let ex = h["examples"][0]
@@ -281,9 +307,17 @@ fn main() {
     print("")
   }
   print(str(len(sorted_hits)) + " pattern(s) present: " + str(exposed)
-        + " actually served, " + str(present) + " blocked by the server")
-  if exposed == 0 {
-    print("Nothing sensitive is reachable over HTTP, though the files are still on disk.")
+        + " actually served, " + str(present) + " blocked by the server, "
+        + str(unknown) + " could not be checked")
+  if unknown > 0 {
+    print("")
+    print("Some requests did not complete, so this is NOT an all-clear. Check that")
+    print("the web server is running and reachable on 127.0.0.1:80.")
+  }
+  else {
+    if exposed == 0 {
+      print("Nothing sensitive is reachable over HTTP, though the files are still on disk.")
+    }
   }
   return 0
 }
