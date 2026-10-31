@@ -1,0 +1,22 @@
+# larz-fs - Read-only remounts, inode exhaustion and fstab drift
+#
+# larz-disk answers "am I out of space". This answers the other ways a
+# filesystem fails and looks like an application bug: one the kernel remounted
+# read-only after an I/O error, inodes exhausted while bytes remain, and fstab
+# entries that are not mounted or are mounted with different options.
+
+import "larzos/pkg" as pkg
+
+pkg.package({
+  "name":    "larz-fs",
+  "version": "0.1.0",
+  "summary": "Read-only remounts, inode exhaustion and fstab drift",
+  "arch":    "all",
+  "section": "admin",
+  "depends": ["larzscript"],
+  "build":   [],
+  "install": [
+    "install -Dm755 files/larz-fs    $DESTDIR/usr/bin/larz-fs",
+    "install -Dm644 files/larz-fs.lz $DESTDIR/usr/lib/larzos/larz-fs.lz",
+  ],
+})

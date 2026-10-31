@@ -1,0 +1,319 @@
+# larz-updates - what this machine is missing, and what it installed but is
+# not actually running.
+#
+# `apt list --upgradable` answers the easy half. Three things it will not tell
+# you, each of which has bitten a real server:
+#
+#   * "0 upgradable" is meaningless if the package lists are three weeks old.
+#     A stale cache reports a clean machine, which is the same false all-clear
+#     an unreachable check gives you. So the age of the lists is checked first
+#     and reported before anything else.
+#   * a kernel update installs fine and changes nothing until you reboot. The
+#     package is current, every package-based check passes, and the machine is
+#     still running the old kernel. This compares `uname -r` against the
+#     newest installed kernel - the same question larz-certs asks about a
+#     renewed certificate nobody loaded.
+#   * an obsolete package - installed, but no configured repository offers it
+#     any more - will never receive another security update, and nothing tells
+#     you it exists.
+
+fn tokens(line) {
+  let out = []
+  for p in line.replace("\t", " ").split(" ") {
+    if p != "" { out.push(p) }
+  }
+  return out
+}
+
+fn is_num(s) {
+  if s == "" { return false }
+  let i = 0
+  while i < len(s) {
+    if not "0123456789".contains(s[i]) { return false }
+    i = i + 1
+  }
+  return true
+}
+
+fn count_lines(s) {
+  let n = 0
+  for l in s.split("\n") {
+    if l.strip() != "" { n = n + 1 }
+  }
+  return n
+}
+
+# ------------------------------------------------- how old are the lists
+
+fn lists_age_hours() {
+  # the mtime of the lists directory moves on every successful apt update
+  let out = capture("stat -c %Y /var/lib/apt/lists 2>/dev/null").strip()
+  if not is_num(out) { return -1 }
+  let age = time() - int(out)
+  return int(age / 3600)
+}
+
+# ------------------------------------------------------------- upgradable
+
+fn upgradable() {
+  # -s is a simulation: it reads the cache and changes nothing
+  let out = capture("apt-get -s upgrade 2>/dev/null | grep '^Inst'")
+  let sec = []
+  let ord = []
+  for line in out.split("\n") {
+    let t = line.strip()
+    if t == "" { continue }
+    let f = tokens(t)
+    if len(f) < 2 { continue }
+    let name = f[1]
+    # the origin is in brackets: (1.2.3 Ubuntu:24.04/noble-security [amd64])
+    if t.contains("-security") { sec.push(name) } else { ord.push(name) }
+  }
+  return {"security": sec, "ordinary": ord}
+}
+
+# --------------------------------------------- kernel installed vs running
+
+# compare two kernel version strings by their numeric parts, so 6.8.0-147
+# sorts after 6.8.0-64 rather than before it the way a string compare would
+fn kver_parts(v) {
+  let out = []
+  let cur = ""
+  let i = 0
+  while i < len(v) {
+    let c = v[i]
+    if "0123456789".contains(c) { cur = cur + c }
+    else {
+      if cur != "" { out.push(int(cur)) cur = "" }
+    }
+    i = i + 1
+  }
+  if cur != "" { out.push(int(cur)) }
+  return out
+}
+
+fn kver_newer(a, b) {
+  let pa = kver_parts(a)
+  let pb = kver_parts(b)
+  let n = len(pa)
+  if len(pb) < n { n = len(pb) }
+  let i = 0
+  while i < n {
+    if pa[i] > pb[i] { return true }
+    if pa[i] < pb[i] { return false }
+    i = i + 1
+  }
+  return len(pa) > len(pb)
+}
+
+fn installed_kernels() {
+  let out = capture("dpkg-query -W -f='${Package}\\n' 'linux-image-*' 2>/dev/null")
+  let ks = []
+  for line in out.split("\n") {
+    let t = line.strip()
+    if t == "" { continue }
+    # only the versioned images, not the meta-packages
+    if not t.starts_with("linux-image-") { continue }
+    let ver = t[12:len(t)]
+    if len(ver) == 0 { continue }
+    if not "0123456789".contains(ver[0]) { continue }
+    ks.push(ver)
+  }
+  return ks
+}
+
+fn newest_kernel(ks) {
+  let best = ""
+  for k in ks {
+    if best == "" { best = k continue }
+    if kver_newer(k, best) { best = k }
+  }
+  return best
+}
+
+# ----------------------------------------------------------- obsolete etc
+
+fn obsolete_packages() {
+  # "installed,local" means dpkg has it and no configured repo offers it
+  let out = capture("apt list --installed 2>/dev/null | grep 'installed,local' | cut -d/ -f1")
+  let ps = []
+  for line in out.split("\n") {
+    let t = line.strip()
+    if t != "" { ps.push(t) }
+  }
+  return ps
+}
+
+fn jesc(s) {
+  return s.replace("\\", "\\\\").replace("\"", "\\\"")
+}
+
+fn join_some(list, n) {
+  let out = ""
+  let i = 0
+  while i < len(list) and i < n {
+    if out != "" { out = out + ", " }
+    out = out + list[i]
+    i = i + 1
+  }
+  if len(list) > n { out = out + ", +" + str(len(list) - n) + " more" }
+  return out
+}
+
+fn main() {
+  let as_j = false
+  for a in args {
+    if a == "--json" { as_j = true }
+    if a == "-h" or a == "--help" {
+      print("larz-updates - what is missing, and what is installed but not running")
+      print("")
+      print("usage: larz-updates [--json]")
+      print("")
+      print("Reports pending updates with security ones separated, and three")
+      print("things apt will not tell you:")
+      print("  - how old the package lists are, because \"0 upgradable\" from")
+      print("    a stale cache is a false all-clear")
+      print("  - whether you are running an older kernel than the one")
+      print("    installed, which no package check can see")
+      print("  - obsolete packages that no repository offers any more, and so")
+      print("    will never get another security update")
+      print("")
+      print("  --json   machine-readable output")
+      print("")
+      print("It only simulates; it never installs or removes anything.")
+      return 0
+    }
+  }
+
+  if capture("command -v apt-get 2>/dev/null").strip() == "" {
+    print("larz-updates: apt-get is not present - this is not a Debian-family system.")
+    exit(2)
+  }
+
+  let age = lists_age_hours()
+  let up = upgradable()
+  let ks = installed_kernels()
+  let running = capture("uname -r").strip()
+  let newest = newest_kernel(ks)
+  let reboot_flag = file_exists("/var/run/reboot-required")
+  let obs = obsolete_packages()
+  let held = capture("apt-mark showhold 2>/dev/null")
+  let held_n = count_lines(held)
+
+  # the running kernel can be older than the newest installed one, which means
+  # the update is on disk and doing nothing
+  let kernel_stale = false
+  if newest != "" and running != "" {
+    if kver_newer(newest, running) { kernel_stale = true }
+  }
+
+  if as_j {
+    let out = "{\n  \"lists_age_hours\": " + str(age)
+        + ",\n  \"security_updates\": " + str(len(up["security"]))
+        + ",\n  \"other_updates\": " + str(len(up["ordinary"]))
+        + ",\n  \"running_kernel\": \"" + jesc(running) + "\""
+        + ",\n  \"newest_installed_kernel\": \"" + jesc(newest) + "\""
+        + ",\n  \"kernel_needs_reboot\": " + str(kernel_stale).lower()
+        + ",\n  \"reboot_required_flag\": " + str(reboot_flag).lower()
+        + ",\n  \"installed_kernels\": " + str(len(ks))
+        + ",\n  \"obsolete_packages\": " + str(len(obs))
+        + ",\n  \"held_packages\": " + str(held_n)
+        + ",\n  \"security_list\": ["
+    let f = true
+    for p in up["security"] {
+      if not f { out = out + ", " }
+      f = false
+      out = out + "\"" + jesc(p) + "\""
+    }
+    out = out + "],\n  \"obsolete_list\": ["
+    f = true
+    for p in obs {
+      if not f { out = out + ", " }
+      f = false
+      out = out + "\"" + jesc(p) + "\""
+    }
+    print(out + "]\n}")
+    return 0
+  }
+
+  # the age of the cache first: everything below is only as true as this is
+  if age < 0 {
+    print("!! Could not read the age of /var/lib/apt/lists, so the counts below")
+    print("   may be based on nothing. Run `sudo apt update` first.")
+    print("")
+  }
+  else {
+    if age > 168 {
+      print("!! The package lists are " + str(int(age / 24)) + " days old.")
+      print("   Everything below is based on that stale cache - a count of zero")
+      print("   would mean \"nothing known\", not \"nothing pending\".")
+      print("   Run `sudo apt update` and try again.")
+      print("")
+    }
+  }
+
+  print("UPDATES")
+  print("".ljust(72, "-"))
+  print("  package lists    " + str(age) + " hours old")
+  if len(up["security"]) > 0 {
+    print("  SECURITY         " + str(len(up["security"])) + " pending")
+    print("                   " + join_some(up["security"], 6))
+  }
+  else {
+    print("  security         none pending")
+  }
+  print("  other updates    " + str(len(up["ordinary"])) + " pending")
+  if held_n > 0 {
+    print("  held back        " + str(held_n) + " package(s) pinned - they will not update")
+  }
+
+  print("")
+  print("KERNEL")
+  print("".ljust(72, "-"))
+  print("  running          " + running)
+  print("  newest installed " + newest)
+  if kernel_stale {
+    print("")
+    print("  *** A NEWER KERNEL IS INSTALLED THAN THE ONE RUNNING.")
+    print("  *** The package is up to date and the machine is not. Reboot to")
+    print("  *** use it - no package-based check can see this.")
+  }
+  else {
+    print("  up to date       running the newest installed kernel")
+  }
+  if reboot_flag {
+    let pkgs = ""
+    if file_exists("/var/run/reboot-required.pkgs") {
+      pkgs = read_file("/var/run/reboot-required.pkgs")
+    }
+    print("  reboot flag      set by: " + join_some(pkgs.split("\n"), 4))
+  }
+  if len(ks) > 2 {
+    print("  installed images " + str(len(ks)) + " (two is enough; `sudo apt autoremove --purge` clears the rest)")
+  }
+
+  if len(obs) > 0 {
+    print("")
+    print("OBSOLETE - installed, but no repository offers them any more")
+    print("".ljust(72, "-"))
+    print("  These will never receive another security update:")
+    print("  " + join_some(obs, 10))
+  }
+
+  print("")
+  let problems = 0
+  if len(up["security"]) > 0 { problems = problems + 1 }
+  if kernel_stale { problems = problems + 1 }
+  if reboot_flag { problems = problems + 1 }
+  if len(obs) > 0 { problems = problems + 1 }
+  if problems == 0 {
+    print("Nothing urgent: no security updates, running the newest kernel, no")
+    print("obsolete packages.")
+  }
+  else {
+    print(str(problems) + " thing(s) above want attention.")
+  }
+  return 0
+}
+
+main()

@@ -56,12 +56,13 @@ Then edit `/etc/larzos/system.lz`, run `larz-system plan`, then
 
 ## The diagnostic CLIs
 
-Eleven standalone tools, each a single Larzscript file, each read-only, each
+Fourteen standalone tools, each a single Larzscript file, each read-only, each
 installable on a stock Debian/Ubuntu box without converting the machine:
 
 ```sh
 sudo apt install larz-ports larz-cron larz-secrets larz-disk larz-certs \
-                 larz-perms larz-net larz-www larz-dns larz-units larz-logs
+                 larz-perms larz-net larz-www larz-dns larz-units larz-logs \
+                 larz-updates larz-mem larz-fs
 ```
 
 **`larz-ports`** — what is listening, and who can reach it. `ss` lists sockets;
@@ -223,6 +224,52 @@ problems, so error lines are grouped by **shape**: every run of digits becomes
 Two lines of output that say more than a thousand `tail`s. It also reports each
 log's growth since the last run.
 
+
+**`larz-updates`** — what is missing, and what is installed but not running.
+Pending updates with **security ones separated from ordinary ones**, plus three
+things `apt list --upgradable` will not tell you:
+
+- **how old the package lists are.** "0 upgradable" from a three-week-old cache
+  is a false all-clear, so the age is checked first and shouted about if stale.
+- **whether you are running an older kernel than the one installed.** The
+  package is current, every package-based check passes, and the machine is
+  still on the old kernel. Same question `larz-certs` asks about a renewed
+  certificate nobody loaded.
+- **obsolete packages** — installed, but no configured repository offers them
+  any more, so they will never receive another security update and nothing
+  tells you they exist.
+
+**`larz-mem`** — memory pressure, and what the kernel has already killed.
+`free -m` counts page cache as "used", so it alarms people over nothing; this
+reports **MemAvailable** and uses **PSI** to say whether tasks are actually
+stalling. The part nothing else surfaces:
+
+```
+OOM KILLS - last 14 days
+  1x  larzscript            last: Oct 26 06:38:21
+
+  An OOM kill leaves no trace in the application's own log - the
+  process vanishes and gets restarted. If a service here has been
+  mysteriously restarting, this is why.
+```
+
+Pairs with `larz-units`: a restart loop and an OOM kill are often the same
+event seen from two ends.
+
+**`larz-fs`** — the ways a filesystem fails that are *not* about free bytes
+(`larz-disk` covers those):
+
+- a filesystem the kernel **remounted read-only** after an I/O error. Writes
+  start failing, `df` still shows plenty of space, and nothing says why.
+- **inodes exhausted while bytes remain** — the disk is 40% full and you cannot
+  create a file. Every space check passes.
+- **fstab drift** — an entry that is not mounted, or is mounted with different
+  options than fstab asks for, so the next reboot behaves differently from now.
+
+Verified against all three with real failures built in a privileged container:
+a 128-inode filesystem filled to 100%, a read-only remount while fstab said
+writable, and an unmounted fstab entry.
+
 ---
 
 ## Other Debian/Ubuntu-family distributions
@@ -326,8 +373,9 @@ packages/              the distro's own packages (larz-desktop, larz-ai, larzsh,
                        larz-claude-code — `larz code`, Claude Code preinstalled,
                        larz-ports / larz-cron / larz-secrets / larz-disk /
                        larz-certs / larz-perms / larz-net / larz-www /
-                       larz-dns / larz-units / larz-logs — the eleven
-                       read-only diagnostic CLIs)
+                       larz-dns / larz-units / larz-logs / larz-updates /
+                       larz-mem / larz-fs — the fourteen read-only
+                       diagnostic CLIs)
 windows/               LarzOS.exe — the rebranded WSL distro-launcher + MSIX
 docs/                  design notes and the system.lz schema
 ```

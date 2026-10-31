@@ -1,0 +1,333 @@
+# larz-fs - the ways a filesystem fails that are not about free bytes.
+#
+# larz-disk answers "am I out of space". This answers the other three, each of
+# which looks like a random application bug rather than a disk problem:
+#
+#   * a filesystem the kernel remounted READ-ONLY after an I/O error. Writes
+#     start failing, the app logs something unhelpful, df still shows plenty
+#     of space, and nothing says "your disk went read-only forty minutes ago".
+#   * inodes exhausted while bytes remain. The disk is 40% full and you cannot
+#     create a file. Every space check passes.
+#   * an fstab entry that is not mounted, or is mounted with different options
+#     than fstab asks for - so the next reboot behaves differently from now.
+#
+# It also reports what the kernel itself has said about the block devices,
+# because an I/O error in the ring buffer is the earliest warning there is.
+
+fn tokens(line) {
+  let out = []
+  for p in line.replace("\t", " ").split(" ") {
+    if p != "" { out.push(p) }
+  }
+  return out
+}
+
+fn is_num(s) {
+  if s == "" { return false }
+  let i = 0
+  while i < len(s) {
+    if not "0123456789".contains(s[i]) { return false }
+    i = i + 1
+  }
+  return true
+}
+
+fn has_opt(opts, name) {
+  for o in opts.split(",") {
+    if o.strip() == name { return true }
+  }
+  return false
+}
+
+fn contains_str(list, s) {
+  for x in list {
+    if x == s { return true }
+  }
+  return false
+}
+
+# pseudo-filesystems are not disks and clutter every answer
+let SKIP_FS = ["proc", "sysfs", "devtmpfs", "tmpfs", "devpts", "cgroup",
+               "cgroup2", "pstore", "bpf", "autofs", "mqueue", "hugetlbfs",
+               "debugfs", "tracefs", "configfs", "fusectl", "securityfs",
+               "efivarfs", "ramfs", "squashfs", "overlay", "nsfs", "binfmt_misc",
+               "fuse.lxcfs", "rpc_pipefs", "selinuxfs"]
+
+fn real_mounts() {
+  let rows = []
+  let out = capture("findmnt -rno TARGET,SOURCE,FSTYPE,OPTIONS 2>/dev/null")
+  for line in out.split("\n") {
+    let f = tokens(line)
+    if len(f) < 4 { continue }
+    if contains_str(SKIP_FS, f[2]) { continue }
+    rows.push({"target": f[0], "source": f[1], "fstype": f[2], "opts": f[3]})
+  }
+  return rows
+}
+
+fn fstab_entries() {
+  let rows = []
+  if not file_exists("/etc/fstab") { return rows }
+  let raw = ""
+  raw = read_file("/etc/fstab")
+  for line in raw.split("\n") {
+    let t = line.strip()
+    if t == "" or t.starts_with("#") { continue }
+    let f = tokens(t)
+    if len(f) < 3 { continue }
+    if f[2] == "swap" { continue }
+    if contains_str(SKIP_FS, f[2]) { continue }
+    let opts = "defaults"
+    if len(f) >= 4 { opts = f[3] }
+    rows.push({"source": f[0], "target": f[1], "fstype": f[2], "opts": opts})
+  }
+  return rows
+}
+
+fn inode_usage() {
+  let rows = []
+  let out = capture("df -i -P -x tmpfs -x devtmpfs -x squashfs -x overlay 2>/dev/null")
+  let lines = out.split("\n")
+  let i = 1
+  while i < len(lines) {
+    let f = tokens(lines[i])
+    i = i + 1
+    if len(f) < 6 { continue }
+    if not is_num(f[1]) { continue }
+    let total = int(f[1])
+    let used = int(f[2])
+    let free = int(f[3])
+    if total == 0 { continue }
+    # same arithmetic df uses: used/(used+free), rounded up
+    let base = used + free
+    let pct = 0
+    if base > 0 { pct = int((used * 100 + base - 1) / base) }
+    let dup = false
+    for r in rows {
+      if r["dev"] == f[0] { dup = true }
+    }
+    if dup { continue }
+    rows.push({"dev": f[0], "mount": f[5], "total": total, "used": used, "pct": pct})
+  }
+  return rows
+}
+
+fn kernel_disk_errors(days) {
+  let out = capture("journalctl -k --no-pager --since '-" + str(days)
+                    + " days' 2>/dev/null | grep -aiE 'I/O error|remounting read-only|remounted read-only|EXT4-fs error|XFS .*error|Buffer I/O error|critical medium error|md/raid.*fail' || true")
+  let rows = []
+  let n = 0
+  for line in out.split("\n") {
+    let t = line.strip()
+    if t == "" { continue }
+    n = n + 1
+    if len(rows) < 5 { rows.push(t[0:150]) }
+  }
+  return {"count": n, "samples": rows}
+}
+
+fn add(hits, sev, kind, where, detail) {
+  hits.push({"sev": sev, "kind": kind, "where": where, "detail": detail})
+  return 0
+}
+
+fn rank(s) {
+  if s == "bad" { return 0 }
+  if s == "warn" { return 1 }
+  return 2
+}
+
+fn jesc(s) {
+  return s.replace("\\", "\\\\").replace("\"", "\\\"")
+}
+
+fn main() {
+  let as_j = false
+  let days = 14
+  let i = 0
+  while i < len(args) {
+    let a = args[i]
+    if a == "--json" { as_j = true }
+    if a == "--days" {
+      if i + 1 < len(args) {
+        if is_num(args[i + 1]) { days = int(args[i + 1]) }
+      }
+    }
+    if a == "-h" or a == "--help" {
+      print("larz-fs - filesystem failures that are not about free space")
+      print("")
+      print("usage: larz-fs [--days N] [--json]")
+      print("")
+      print("  --days N  how far back to read the kernel log (default 14)")
+      print("  --json    machine-readable output")
+      print("")
+      print("Checks for a filesystem the kernel remounted read-only, inodes")
+      print("exhausted while bytes remain, fstab entries that are not mounted")
+      print("or are mounted with different options, and what the kernel has")
+      print("said about the block devices.")
+      print("")
+      print("For free space itself, use larz-disk.")
+      return 0
+    }
+    i = i + 1
+  }
+
+  let mounts = real_mounts()
+  let fstab = fstab_entries()
+  let inodes = inode_usage()
+  let kerr = kernel_disk_errors(days)
+  let hits = []
+
+  # 1. read-only when it should not be
+  for m in mounts {
+    if not has_opt(m["opts"], "ro") { continue }
+    # some mounts are read-only by design, so only flag one fstab asks to be
+    # writable - or one not in fstab at all that is a real block device
+    let want_rw = false
+    let known = false
+    for e in fstab {
+      if e["target"] == m["target"] {
+        known = true
+        if not has_opt(e["opts"], "ro") { want_rw = true }
+      }
+    }
+    if want_rw {
+      add(hits, "bad", "READ-ONLY but fstab says writable", m["target"],
+          m["source"] + " (" + m["fstype"] + ") - the kernel most likely "
+          + "remounted it after an I/O error; writes are failing now")
+    }
+    else {
+      if not known and m["target"] == "/" {
+        add(hits, "bad", "root filesystem is READ-ONLY", m["target"],
+            m["source"] + " (" + m["fstype"] + ")")
+      }
+    }
+  }
+
+  # 2. inodes exhausted while bytes remain
+  for n in inodes {
+    if n["pct"] >= 95 {
+      add(hits, "bad", "inodes nearly exhausted", n["mount"],
+          str(n["pct"]) + "% of " + str(n["total"]) + " inodes used - you will "
+          + "get \"No space left on device\" with free bytes still showing")
+    }
+    else {
+      if n["pct"] >= 85 {
+        add(hits, "warn", "inode usage high", n["mount"],
+            str(n["pct"]) + "% of " + str(n["total"]) + " inodes used")
+      }
+    }
+  }
+
+  # 3. fstab drift: either not mounted, or mounted differently
+  for e in fstab {
+    let found = {}
+    for m in mounts {
+      if m["target"] == e["target"] { found = m }
+    }
+    if not found.has("target") {
+      add(hits, "bad", "in fstab but not mounted", e["target"],
+          e["source"] + " (" + e["fstype"] + ") - it will mount at the next "
+          + "boot, so the machine is not in the state fstab describes")
+      continue
+    }
+    # options worth comparing: the ones that change behaviour or safety
+    for opt in ["noexec", "nosuid", "nodev", "ro"] {
+      let want = has_opt(e["opts"], opt)
+      let got = has_opt(found["opts"], opt)
+      if want and not got {
+        add(hits, "warn", "mounted without " + opt, e["target"],
+            "fstab asks for " + opt + " - the next reboot will differ from now")
+      }
+    }
+  }
+
+  # 4. what the kernel has said
+  if kerr["count"] > 0 {
+    add(hits, "bad", "kernel reported disk errors", "kernel log",
+        str(kerr["count"]) + " line(s) in the last " + str(days) + " days")
+  }
+
+  let sorted_hits = []
+  for h in hits {
+    let j = 0
+    while j < len(sorted_hits) {
+      if rank(h["sev"]) < rank(sorted_hits[j]["sev"]) { break }
+      j = j + 1
+    }
+    sorted_hits.insert(j, h)
+  }
+
+  if as_j {
+    let out = "{\n  \"mounts_checked\": " + str(len(mounts))
+        + ",\n  \"fstab_entries\": " + str(len(fstab))
+        + ",\n  \"kernel_disk_error_lines\": " + str(kerr["count"])
+        + ",\n  \"inodes\": ["
+    let f = true
+    for n in inodes {
+      if not f { out = out + ", " }
+      f = false
+      out = out + "{\"mount\": \"" + jesc(n["mount"]) + "\", \"percent\": " + str(n["pct"])
+          + ", \"total\": " + str(n["total"]) + "}"
+    }
+    out = out + "],\n  \"findings\": ["
+    f = true
+    for h in sorted_hits {
+      if not f { out = out + ", " }
+      f = false
+      out = out + "{\"severity\": \"" + h["sev"] + "\", \"issue\": \"" + jesc(h["kind"])
+          + "\", \"where\": \"" + jesc(h["where"]) + "\", \"detail\": \"" + jesc(h["detail"]) + "\"}"
+    }
+    print(out + "]\n}")
+    return 0
+  }
+
+  print("INODES")
+  print("".ljust(74, "-"))
+  for n in inodes {
+    let bar = ""
+    let filled = int(n["pct"] / 5)
+    let k = 0
+    while k < 20 {
+      if k < filled { bar = bar + "#" } else { bar = bar + "." }
+      k = k + 1
+    }
+    print("  " + n["mount"].ljust(20) + bar + " " + str(n["pct"]).rjust(3) + "%  of "
+          + str(n["total"]) + " inodes")
+  }
+
+  print("")
+  print("MOUNTS")
+  print("".ljust(74, "-"))
+  print("  " + str(len(mounts)) + " real filesystem(s) mounted, " + str(len(fstab))
+        + " entr(ies) in fstab")
+
+  if kerr["count"] > 0 {
+    print("")
+    print("KERNEL DISK MESSAGES - last " + str(days) + " days")
+    print("".ljust(74, "-"))
+    for s in kerr["samples"] { print("  " + s) }
+  }
+
+  print("")
+  if len(sorted_hits) == 0 {
+    print("No read-only remounts, no inode pressure, no fstab drift, and the")
+    print("kernel has reported nothing about the block devices.")
+    print("(For free space, use larz-disk.)")
+    return 0
+  }
+
+  print("FINDINGS")
+  print("".ljust(74, "-"))
+  let bad = 0
+  for h in sorted_hits {
+    if h["sev"] == "bad" { bad = bad + 1 }
+    print("  " + h["sev"].ljust(6) + h["kind"] + "  [" + h["where"] + "]")
+    print("         " + h["detail"])
+    print("")
+  }
+  print(str(len(sorted_hits)) + " finding(s), " + str(bad) + " serious")
+  return 0
+}
+
+main()

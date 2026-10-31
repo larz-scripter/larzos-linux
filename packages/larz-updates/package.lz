@@ -1,0 +1,23 @@
+# larz-updates - Pending updates, and the kernel installed but not running
+#
+# "0 upgradable" is meaningless if the package lists are three weeks old, and
+# a kernel update changes nothing until you reboot - the package is current and
+# the machine is not. This reports both, separates security updates from
+# ordinary ones, and lists obsolete packages that no repository offers any more
+# and so will never get another security update.
+
+import "larzos/pkg" as pkg
+
+pkg.package({
+  "name":    "larz-updates",
+  "version": "0.1.0",
+  "summary": "Pending updates, and the kernel installed but not running",
+  "arch":    "all",
+  "section": "admin",
+  "depends": ["larzscript"],
+  "build":   [],
+  "install": [
+    "install -Dm755 files/larz-updates    $DESTDIR/usr/bin/larz-updates",
+    "install -Dm644 files/larz-updates.lz $DESTDIR/usr/lib/larzos/larz-updates.lz",
+  ],
+})

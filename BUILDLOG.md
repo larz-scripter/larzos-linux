@@ -2,6 +2,55 @@
 
 Newest first. Mirrored to <https://larzos.com/larzos-linux/>.
 
+## 2026-10-31 - 0.1.22: larz-updates, larz-mem, larz-fs
+
+Three more, taking the set to fourteen. All three follow the pattern that has
+turned out to be the most useful one in this series: **something is installed
+or configured, and is not actually in effect.**
+
+- **`larz-updates`** separates security updates from ordinary ones and adds
+  three things `apt list --upgradable` does not answer:
+  - **the age of the package lists.** "0 upgradable" from a three-week-old
+    cache is the same false all-clear an unreachable check gives you, so the
+    age is checked first and reported before any count. Verified by backdating
+    `/var/lib/apt/lists` 30 days in a container: the warning fires and says a
+    count of zero would mean "nothing known", not "nothing pending".
+  - **running kernel versus newest installed kernel.** A kernel update changes
+    nothing until a reboot; the package is current and the machine is not. The
+    version comparison is numeric, not string - a plain string compare says
+    `6.8.0-64 > 6.8.0-147`, which is exactly backwards. Unit-tested against 8
+    pairs including that one.
+  - **obsolete packages** (`installed,local`) - no configured repository offers
+    them, so they will never get another security update and nothing says they
+    exist.
+- **`larz-mem`** reports MemAvailable rather than `free`'s "used", which counts
+  page cache and so alarms people over nothing, and uses PSI to say whether
+  tasks are genuinely stalling. The part nothing else surfaces is **OOM-kill
+  history**: an OOM kill leaves no trace in the application's own log - the
+  process vanishes and systemd restarts it, and the only record is one line in
+  the kernel ring buffer that nobody greps for until the mystery restarts have
+  been going on for weeks. On this machine it immediately found `larzscript`
+  OOM-killed on 2026-10-26 at 17.9GB of virtual memory on a 5.9GB box.
+  Cross-checked against `/proc/meminfo` and the journal: totals match exactly
+  and the kill count matches `grep -c`.
+- **`larz-fs`** covers the filesystem failures that are not about free bytes
+  (`larz-disk` has those): a filesystem the kernel **remounted read-only** after
+  an I/O error, **inodes exhausted while bytes remain**, and **fstab drift** -
+  an entry not mounted, or mounted without the `noexec`/`nosuid`/`nodev`/`ro`
+  that fstab asks for, so the next reboot differs from now. It also surfaces
+  what the kernel itself has said about the block devices.
+  All three failure modes were verified by **building them for real** in a
+  privileged container: a 16MB filesystem made with `-N 128` and filled to
+  100% of its inodes, a `remount,ro` while fstab said writable, and an fstab
+  entry pointing at a device that does not exist. Each fired.
+
+All three are wired into the daily infrastructure health card, which now runs
+eleven checks. One tuning note worth recording: the card asks `larz-mem` for a
+**3-day** OOM window rather than the tool's interactive 14-day default, because
+a daily report should distinguish "it is happening" from "it happened" - an OOM
+kill five days ago is worth knowing once, not flagging as urgent every morning
+for a fortnight.
+
 ## 2026-10-31 - 0.1.21: larz-dns, larz-units, larz-logs
 
 Three more read-only CLIs, taking the set to eleven.
