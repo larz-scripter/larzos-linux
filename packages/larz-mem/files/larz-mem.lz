@@ -1,0 +1,306 @@
+# larz-mem - memory pressure, and what the kernel has already killed.
+#
+# `free -m` is the usual check and it answers the wrong question. Its "used"
+# column counts page cache, so a healthy machine looks alarming and nobody
+# believes it any more. What actually matters is MemAvailable, whether tasks
+# are *stalling* on memory, and - the part nothing surfaces - whether the
+# kernel has been quietly killing processes.
+#
+# That last one is the reason this exists. An OOM kill does not appear in the
+# application's own log: the process simply vanishes mid-work. Then systemd
+# restarts it and everything looks normal. The only record is one line in the
+# kernel ring buffer, and nobody greps for it until much later, when the
+# mystery restarts have been going on for weeks.
+
+fn tokens(line) {
+  let out = []
+  for p in line.replace("\t", " ").split(" ") {
+    if p != "" { out.push(p) }
+  }
+  return out
+}
+
+fn is_num(s) {
+  if s == "" { return false }
+  let i = 0
+  while i < len(s) {
+    if not "0123456789".contains(s[i]) { return false }
+    i = i + 1
+  }
+  return true
+}
+
+fn one_dp(v) {
+  let w = int(v)
+  let t = int((v - w) * 10 + 0.5)
+  if t >= 10 { w = w + 1 t = 0 }
+  return str(w) + "." + str(t)
+}
+
+fn human_mb(mb) {
+  if mb < 1024 { return str(int(mb)) + "M" }
+  return one_dp(mb / 1024.0) + "G"
+}
+
+# ------------------------------------------------------------ meminfo
+
+fn meminfo() {
+  let d = {}
+  let raw = ""
+  raw = read_file("/proc/meminfo")
+  for line in raw.split("\n") {
+    let t = line.strip()
+    if not t.contains(":") { continue }
+    let k = t.split(":")[0]
+    let f = tokens(t.split(":")[1])
+    if len(f) == 0 { continue }
+    if is_num(f[0]) { d[k] = int(f[0]) }      # kB
+  }
+  return d
+}
+
+# ------------------------------------------------------------- pressure
+#
+# PSI is the honest signal: "some" is the share of time at least one task was
+# stalled waiting for memory, "full" the share where everything was. A box can
+# look busy in `free` with zero pressure, and that is fine.
+
+fn pressure()  {
+  let d = {"available": false, "some10": 0.0, "some60": 0.0, "full10": 0.0, "full60": 0.0}
+  if not file_exists("/proc/pressure/memory") { return d }
+  let raw = ""
+  raw = read_file("/proc/pressure/memory")
+  d["available"] = true
+  for line in raw.split("\n") {
+    let t = line.strip()
+    if t == "" { continue }
+    let f = tokens(t)
+    let which = f[0]
+    for p in f {
+      if p.starts_with("avg10=") {
+        let v = float(p[6:len(p)])
+        if which == "some" { d["some10"] = v } else { d["full10"] = v }
+      }
+      if p.starts_with("avg60=") {
+        let v = float(p[6:len(p)])
+        if which == "some" { d["some60"] = v } else { d["full60"] = v }
+      }
+    }
+  }
+  return d
+}
+
+# ------------------------------------------------------------- OOM history
+
+fn oom_kills(days) {
+  # grouped by victim: "larzscript killed 3 times" is the useful shape, not
+  # three separate lines nobody connects
+  let out = capture("journalctl -k --no-pager --since '-" + str(days)
+                    + " days' 2>/dev/null | grep -aiE 'Killed process|oom-kill:' || true")
+  let counts = {}
+  let order = []
+  let last = {}
+  let total = 0
+  for line in out.split("\n") {
+    let t = line.strip()
+    if t == "" { continue }
+    if not t.contains("Killed process") { continue }
+    total = total + 1
+    # the victim's name is in parentheses: Killed process 123 (name) total-vm:...
+    let name = "?"
+    if t.contains("(") and t.contains(")") {
+      let after = t.split("(")[1]
+      if after.contains(")") { name = after.split(")")[0] }
+    }
+    if counts.has(name) { counts[name] = counts[name] + 1 }
+    else { counts[name] = 1 order.push(name) }
+    # keep the most recent timestamp seen for this victim
+    let f = tokens(t)
+    if len(f) >= 3 { last[name] = f[0] + " " + f[1] + " " + f[2] }
+  }
+  let rows = []
+  for n in order {
+    let when = ""
+    if last.has(n) { when = last[n] }
+    rows.push({"process": n, "count": counts[n], "last": when})
+  }
+  return {"rows": rows, "total": total}
+}
+
+fn top_consumers(n) {
+  let out = capture("ps -eo rss=,comm= --sort=-rss 2>/dev/null | head -" + str(n))
+  let rows = []
+  for line in out.split("\n") {
+    let f = tokens(line)
+    if len(f) < 2 { continue }
+    if not is_num(f[0]) { continue }
+    rows.push({"mb": int(f[0]) / 1024, "name": f[1]})
+  }
+  return rows
+}
+
+fn jesc(s) {
+  return s.replace("\\", "\\\\").replace("\"", "\\\"")
+}
+
+fn main() {
+  let as_j = false
+  let days = 14
+  let i = 0
+  while i < len(args) {
+    let a = args[i]
+    if a == "--json" { as_j = true }
+    if a == "--days" {
+      if i + 1 < len(args) {
+        if is_num(args[i + 1]) { days = int(args[i + 1]) }
+      }
+    }
+    if a == "-h" or a == "--help" {
+      print("larz-mem - memory pressure, and what the kernel has already killed")
+      print("")
+      print("usage: larz-mem [--days N] [--json]")
+      print("")
+      print("  --days N  how far back to look for OOM kills (default 14)")
+      print("  --json    machine-readable output")
+      print("")
+      print("Reports MemAvailable rather than free's \"used\", which counts page")
+      print("cache and makes a healthy machine look alarming. Uses PSI to say")
+      print("whether tasks are actually stalling. And it greps the kernel log")
+      print("for OOM kills, which appear in no application log - the process")
+      print("just vanishes and gets restarted.")
+      return 0
+    }
+    i = i + 1
+  }
+
+  let mi = meminfo()
+  if not mi.has("MemTotal") {
+    print("larz-mem: cannot read /proc/meminfo.")
+    exit(2)
+  }
+  let total_mb = mi["MemTotal"] / 1024.0
+  let avail_mb = 0.0
+  if mi.has("MemAvailable") { avail_mb = mi["MemAvailable"] / 1024.0 }
+  let used_pct = 0
+  if total_mb > 0 { used_pct = int((total_mb - avail_mb) * 100 / total_mb) }
+  let swap_total = 0.0
+  let swap_free = 0.0
+  if mi.has("SwapTotal") { swap_total = mi["SwapTotal"] / 1024.0 }
+  if mi.has("SwapFree") { swap_free = mi["SwapFree"] / 1024.0 }
+  let swap_used = swap_total - swap_free
+  let swap_pct = 0
+  if swap_total > 0 { swap_pct = int(swap_used * 100 / swap_total) }
+
+  let ps = pressure()
+  let oom = oom_kills(days)
+  let top = top_consumers(6)
+
+  # a verdict, in priority order: a kill already happened beats any gauge
+  let status = "ok"
+  let why = []
+  if oom["total"] > 0 {
+    status = "bad"
+    why.push(str(oom["total"]) + " OOM kill(s) in the last " + str(days) + " days")
+  }
+  if used_pct >= 92 {
+    status = "bad"
+    why.push("only " + human_mb(avail_mb) + " available of " + human_mb(total_mb))
+  }
+  else {
+    if used_pct >= 85 and status != "bad" {
+      status = "warn"
+      why.push(human_mb(avail_mb) + " available of " + human_mb(total_mb))
+    }
+  }
+  if ps["available"] {
+    if ps["some60"] >= 10.0 {
+      status = "bad"
+      why.push("tasks stalled on memory " + one_dp(ps["some60"]) + "% of the last minute")
+    }
+    else {
+      if ps["some60"] >= 1.0 and status == "ok" {
+        status = "warn"
+        why.push("some memory stalling (" + one_dp(ps["some60"]) + "% of the last minute)")
+      }
+    }
+  }
+
+  if as_j {
+    let out = "{\n  \"status\": \"" + status + "\""
+        + ",\n  \"total_mb\": " + str(int(total_mb))
+        + ",\n  \"available_mb\": " + str(int(avail_mb))
+        + ",\n  \"used_percent\": " + str(used_pct)
+        + ",\n  \"swap_used_mb\": " + str(int(swap_used))
+        + ",\n  \"swap_percent\": " + str(swap_pct)
+        + ",\n  \"psi_available\": " + str(ps["available"]).lower()
+        + ",\n  \"psi_some_avg60\": " + one_dp(ps["some60"])
+        + ",\n  \"oom_kills\": " + str(oom["total"])
+        + ",\n  \"oom_by_process\": ["
+    let f = true
+    for r in oom["rows"] {
+      if not f { out = out + ", " }
+      f = false
+      out = out + "{\"process\": \"" + jesc(r["process"]) + "\", \"count\": "
+          + str(r["count"]) + ", \"last\": \"" + jesc(r["last"]) + "\"}"
+    }
+    out = out + "],\n  \"top_rss\": ["
+    f = true
+    for t in top {
+      if not f { out = out + ", " }
+      f = false
+      out = out + "{\"process\": \"" + jesc(t["name"]) + "\", \"rss_mb\": " + str(int(t["mb"])) + "}"
+    }
+    print(out + "]\n}")
+    return 0
+  }
+
+  print("MEMORY")
+  print("".ljust(72, "-"))
+  print("  total            " + human_mb(total_mb))
+  print("  available        " + human_mb(avail_mb) + "  (" + str(100 - used_pct) + "% free to use)")
+  print("  in use           " + str(used_pct) + "%   <- MemAvailable-based, not free's \"used\"")
+  if swap_total > 0 {
+    print("  swap             " + human_mb(swap_used) + " of " + human_mb(swap_total)
+          + " (" + str(swap_pct) + "%)")
+  }
+  if ps["available"] {
+    print("  stalling (60s)   some " + one_dp(ps["some60"]) + "%, full " + one_dp(ps["full60"]) + "%")
+  }
+  else {
+    print("  stalling         (no PSI on this kernel)")
+  }
+
+  print("")
+  print("OOM KILLS - last " + str(days) + " days")
+  print("".ljust(72, "-"))
+  if oom["total"] == 0 {
+    print("  none. The kernel has not had to kill anything.")
+  }
+  else {
+    for r in oom["rows"] {
+      print("  " + str(r["count"]) + "x  " + r["process"].ljust(22) + "last: " + r["last"])
+    }
+    print("")
+    print("  An OOM kill leaves no trace in the application's own log - the")
+    print("  process vanishes and gets restarted. If a service here has been")
+    print("  mysteriously restarting, this is why.")
+  }
+
+  print("")
+  print("LARGEST RESIDENT PROCESSES")
+  print("".ljust(72, "-"))
+  for t in top {
+    print("  " + human_mb(t["mb"]).rjust(7) + "  " + t["name"])
+  }
+
+  print("")
+  if status == "ok" {
+    print("Memory looks healthy.")
+  }
+  else {
+    for w in why { print("- " + w) }
+  }
+  return 0
+}
+
+main()

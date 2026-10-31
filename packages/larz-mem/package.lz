@@ -1,0 +1,22 @@
+# larz-mem - Memory pressure, and what the OOM killer has already killed
+#
+# free -m counts page cache as "used", so it alarms people over nothing. What
+# matters is MemAvailable, whether tasks are actually stalling (PSI), and
+# whether the kernel has been killing processes - an OOM kill leaves no trace
+# in the application log, the process just vanishes and gets restarted.
+
+import "larzos/pkg" as pkg
+
+pkg.package({
+  "name":    "larz-mem",
+  "version": "0.1.0",
+  "summary": "Memory pressure, and what the OOM killer has already killed",
+  "arch":    "all",
+  "section": "admin",
+  "depends": ["larzscript"],
+  "build":   [],
+  "install": [
+    "install -Dm755 files/larz-mem    $DESTDIR/usr/bin/larz-mem",
+    "install -Dm644 files/larz-mem.lz $DESTDIR/usr/lib/larzos/larz-mem.lz",
+  ],
+})
