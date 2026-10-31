@@ -1,0 +1,442 @@
+# larz-users - who can actually become root on this machine.
+#
+# The account list is the easy part. The question worth answering is who can
+# *get in*, and who can get to root once in - and those two sets are assembled
+# from four places that nobody reads together:
+#
+#   * /etc/passwd and /etc/shadow - accounts, shells, and whether a password
+#     is even set
+#   * /etc/sudoers and /etc/sudoers.d - who can escalate, and who can do it
+#     without typing anything
+#   * every ~/.ssh/authorized_keys - which is the real login list on a server,
+#     and where keys quietly accumulate
+#   * lastlog - which of those accounts has ever been used
+#
+# Two findings this produces that nothing else does:
+#
+#   * a sudo grant for a user who does not exist. It looks harmless, and it
+#     means the day anyone creates an account by that name they get
+#     passwordless root. Cloud images ship these.
+#   * authorized_keys split into restricted and unrestricted. A key with a
+#     forced command is a deploy hook; a bare key is a person with a root
+#     shell. Counting them together hides the difference.
+
+let KEYTYPES = ["ssh-rsa", "ssh-ed25519", "ssh-dss", "ssh-ecdsa",
+                "ecdsa-sha2-nistp256", "ecdsa-sha2-nistp384",
+                "ecdsa-sha2-nistp521", "sk-ecdsa-sha2-nistp256@openssh.com",
+                "sk-ssh-ed25519@openssh.com"]
+
+fn tokens(line) {
+  let out = []
+  for p in line.replace("\t", " ").split(" ") {
+    if p != "" { out.push(p) }
+  }
+  return out
+}
+
+fn is_num(s) {
+  if s == "" { return false }
+  let i = 0
+  while i < len(s) {
+    if not "0123456789".contains(s[i]) { return false }
+    i = i + 1
+  }
+  return true
+}
+
+fn contains_str(list, s) {
+  for x in list {
+    if x == s { return true }
+  }
+  return false
+}
+
+fn is_keytype(w) {
+  for k in KEYTYPES {
+    if w == k { return true }
+  }
+  return false
+}
+
+# ---------------------------------------------------------------- accounts
+
+fn accounts() {
+  let rows = []
+  let raw = capture("getent passwd 2>/dev/null")
+  for line in raw.split("\n") {
+    let t = line.strip()
+    if t == "" { continue }
+    let f = t.split(":")
+    if len(f) < 7 { continue }
+    if not is_num(f[2]) { continue }
+    rows.push({"name": f[0], "uid": int(f[2]), "gid": f[3],
+               "home": f[5], "shell": f[6]})
+  }
+  return rows
+}
+
+fn has_login_shell(shell) {
+  if shell == "" { return false }
+  if shell.ends_with("nologin") { return false }
+  if shell.ends_with("/false") { return false }
+  if shell.ends_with("/sync") { return false }
+  return true
+}
+
+# ---------------------------------------------------------------- passwords
+
+fn shadow_state() {
+  # readable only by root; without it the password column is unknown and must
+  # be reported as unknown rather than assumed fine
+  let d = {"readable": false, "empty": [], "locked": 0, "set": 0}
+  let raw = capture("cat /etc/shadow 2>/dev/null")
+  if raw.strip() == "" { return d }
+  d["readable"] = true
+  for line in raw.split("\n") {
+    let t = line.strip()
+    if t == "" { continue }
+    let f = t.split(":")
+    if len(f) < 2 { continue }
+    let hash = f[1]
+    if hash == "" { d["empty"].push(f[0]) }
+    else {
+      if hash.starts_with("!") or hash.starts_with("*") { d["locked"] = d["locked"] + 1 }
+      else { d["set"] = d["set"] + 1 }
+    }
+  }
+  return d
+}
+
+# ------------------------------------------------------------------ sudoers
+
+fn sudo_grants(known_users, known_groups) {
+  let rows = []
+  let files = ["/etc/sudoers"]
+  if file_exists("/etc/sudoers.d") {
+    for f in listdir("/etc/sudoers.d") {
+      if f.starts_with(".") or f.ends_with("~") { continue }
+      if f.contains(".bak") or f.contains(".dpkg-") { continue }
+      files.push("/etc/sudoers.d/" + f)
+    }
+  }
+  for path in files {
+    let raw = capture("cat '" + path + "' 2>/dev/null")
+    if raw.strip() == "" { continue }
+    for line in raw.split("\n") {
+      let t = line.strip()
+      if t == "" or t.starts_with("#") { continue }
+      if t.starts_with("Defaults") { continue }
+      if t.starts_with("@") { continue }
+      if not t.contains("ALL") and not t.contains("=") { continue }
+      let f = tokens(t)
+      if len(f) < 2 { continue }
+      let who = f[0]
+      # an alias definition is not a grant
+      if who == "User_Alias" or who == "Cmnd_Alias" or who == "Host_Alias" or who == "Runas_Alias" { continue }
+      let nopass = t.contains("NOPASSWD")
+      let is_group = who.starts_with("%")
+      let bare = who
+      if is_group { bare = who[1:len(who)] }
+      let exists = true
+      if is_group { exists = contains_str(known_groups, bare) }
+      else { exists = contains_str(known_users, bare) }
+      rows.push({"who": who, "file": path, "nopasswd": nopass,
+                 "is_group": is_group, "exists": exists, "raw": t[0:90]})
+    }
+  }
+  return rows
+}
+
+fn group_names() {
+  let out = []
+  for line in capture("getent group 2>/dev/null").split("\n") {
+    let t = line.strip()
+    if t == "" { continue }
+    let f = t.split(":")
+    if len(f) > 0 { out.push(f[0]) }
+  }
+  return out
+}
+
+# ------------------------------------------------------------- ssh keys
+
+# A key carrying a forced command or a from= restriction is a deploy hook; a
+# bare key is a person with a shell. Counting them together hides the only
+# distinction that matters.
+fn parse_keys(path) {
+  let res = {"restricted": 0, "open": 0, "comments": []}
+  let raw = capture("cat '" + path + "' 2>/dev/null")
+  if raw.strip() == "" { return res }
+  for line in raw.split("\n") {
+    let t = line.strip()
+    if t == "" or t.starts_with("#") { continue }
+    let f = tokens(t)
+    if len(f) < 2 { continue }
+    let restricted = false
+    if not is_keytype(f[0]) {
+      # the leading field is an options list
+      let o = f[0]
+      if o.contains("command=") or o.contains("from=") or o.contains("restrict") {
+        restricted = true
+      }
+    }
+    if restricted { res["restricted"] = res["restricted"] + 1 }
+    else { res["open"] = res["open"] + 1 }
+    let c = f[len(f) - 1]
+    if len(c) > 40 { c = "(no comment)" }
+    # carry the restriction with the comment, or a list of five comments
+    # appears under a count of four and reads like an error
+    res["comments"].push({"comment": c, "restricted": restricted})
+  }
+  return res
+}
+
+fn never_logged_in() {
+  let out = []
+  let raw = capture("lastlog 2>/dev/null")
+  for line in raw.split("\n") {
+    if not line.contains("Never logged in") { continue }
+    let f = tokens(line)
+    if len(f) > 0 { out.push(f[0]) }
+  }
+  return out
+}
+
+fn add(hits, sev, kind, who, detail) {
+  hits.push({"sev": sev, "kind": kind, "who": who, "detail": detail})
+  return 0
+}
+
+fn rank(s) {
+  if s == "bad" { return 0 }
+  if s == "warn" { return 1 }
+  return 2
+}
+
+fn jesc(s) {
+  return s.replace("\\", "\\\\").replace("\"", "\\\"")
+}
+
+fn main() {
+  let as_j = false
+  for a in args {
+    if a == "--json" { as_j = true }
+    if a == "-h" or a == "--help" {
+      print("larz-users - who can actually become root on this machine")
+      print("")
+      print("usage: larz-users [--json]")
+      print("")
+      print("Assembles the real login and escalation picture from four places")
+      print("nobody reads together: passwd/shadow, sudoers, every")
+      print("authorized_keys, and lastlog. It reports:")
+      print("  - UID 0 accounts and any duplicate UID")
+      print("  - accounts with no password set at all")
+      print("  - sudo grants for a user or group that does NOT exist, which")
+      print("    hand out root the day someone creates that name")
+      print("  - NOPASSWD sudo grants")
+      print("  - SSH keys split into restricted (forced command) and open")
+      print("  - accounts with a login shell that have never been used")
+      print("")
+      print("Run it with sudo: /etc/shadow and other users' keys need it.")
+      return 0
+    }
+  }
+
+  let accts = accounts()
+  if len(accts) == 0 {
+    print("larz-users: could not read the account database.")
+    exit(2)
+  }
+  let names = []
+  for a in accts { names.push(a["name"]) }
+  let groups = group_names()
+  let sh = shadow_state()
+  let grants = sudo_grants(names, groups)
+  let never = never_logged_in()
+  let hits = []
+
+  # UID 0 and duplicate UIDs
+  let root_accts = []
+  let seen_uid = {}
+  for a in accts {
+    if a["uid"] == 0 { root_accts.push(a["name"]) }
+    let k = str(a["uid"])
+    if seen_uid.has(k) {
+      # UID 0 is covered more usefully by the dedicated check below
+      if a["uid"] != 0 {
+        add(hits, "bad", "duplicate UID " + k, a["name"] + " and " + seen_uid[k],
+            "two accounts share a UID, so the system cannot tell them apart")
+      }
+    }
+    else { seen_uid[k] = a["name"] }
+  }
+  if len(root_accts) > 1 {
+    let joined = ""
+    for r in root_accts {
+      if joined != "" { joined = joined + ", " }
+      joined = joined + r
+    }
+    add(hits, "bad", "more than one UID 0 account", joined,
+        "every one of these is root")
+  }
+
+  # passwords
+  if not sh["readable"] {
+    add(hits, "warn", "cannot read /etc/shadow", "-",
+        "run with sudo; without it, accounts with no password cannot be detected")
+  }
+  else {
+    for u in sh["empty"] {
+      add(hits, "bad", "no password set at all", u,
+          "an empty password hash - anyone who reaches a login prompt is in")
+    }
+  }
+
+  # sudo grants: the dead ones are the interesting ones
+  for g in grants {
+    if not g["exists"] {
+      let what = "user"
+      if g["is_group"] { what = "group" }
+      let sev = "warn"
+      let extra = ""
+      if g["nopasswd"] {
+        sev = "bad"
+        extra = " with NOPASSWD, so whoever is created by that name gets root with no password"
+      }
+      let note = g["file"] + extra
+      if g["file"] == "/etc/sudoers" and not g["nopasswd"] {
+        note = note + " - ships with Debian/Ubuntu by default, but still means"
+             + " creating that name grants sudo"
+      }
+      add(hits, sev, "sudo grant for a " + what + " that does not exist", g["who"], note)
+    }
+    else {
+      if g["nopasswd"] and g["who"] != "root" {
+        add(hits, "warn", "passwordless sudo", g["who"],
+            g["file"] + " - root without typing anything")
+      }
+    }
+  }
+
+  # ssh keys per account
+  let keyrows = []
+  for a in accts {
+    let p = a["home"] + "/.ssh/authorized_keys"
+    if a["home"] == "" or not file_exists(p) { continue }
+    let k = parse_keys(p)
+    if k["open"] + k["restricted"] == 0 { continue }
+    keyrows.push({"user": a["name"], "open": k["open"],
+                  "restricted": k["restricted"], "comments": k["comments"],
+                  "shell": a["shell"], "uid": a["uid"]})
+    if a["uid"] == 0 and k["open"] >= 3 {
+      add(hits, "warn", str(k["open"]) + " unrestricted keys can log in as root",
+          a["name"], "each is a full root shell - confirm you still recognise all of them")
+    }
+  }
+
+  # a login shell nobody has ever used
+  for a in accts {
+    if not has_login_shell(a["shell"]) { continue }
+    if contains_str(never, a["name"]) {
+      add(hits, "warn", "login shell, never used", a["name"],
+          "shell " + a["shell"] + " - if it is not needed, give it nologin")
+    }
+  }
+
+  let sorted_hits = []
+  for h in hits {
+    let i = 0
+    while i < len(sorted_hits) {
+      if rank(h["sev"]) < rank(sorted_hits[i]["sev"]) { break }
+      i = i + 1
+    }
+    sorted_hits.insert(i, h)
+  }
+
+  if as_j {
+    let out = "{\n  \"accounts\": " + str(len(accts))
+        + ",\n  \"uid0_accounts\": " + str(len(root_accts))
+        + ",\n  \"shadow_readable\": " + str(sh["readable"]).lower()
+        + ",\n  \"passwords_set\": " + str(sh["set"])
+        + ",\n  \"sudo_grants\": " + str(len(grants))
+        + ",\n  \"ssh_key_holders\": ["
+    let f = true
+    for k in keyrows {
+      if not f { out = out + ", " }
+      f = false
+      out = out + "{\"user\": \"" + jesc(k["user"]) + "\", \"open_keys\": " + str(k["open"])
+          + ", \"restricted_keys\": " + str(k["restricted"]) + "}"
+    }
+    out = out + "],\n  \"findings\": ["
+    f = true
+    for h in sorted_hits {
+      if not f { out = out + ", " }
+      f = false
+      out = out + "{\"severity\": \"" + h["sev"] + "\", \"issue\": \"" + jesc(h["kind"])
+          + "\", \"who\": \"" + jesc(h["who"]) + "\", \"detail\": \"" + jesc(h["detail"]) + "\"}"
+    }
+    print(out + "]\n}")
+    return 0
+  }
+
+  print("WHO CAN LOG IN")
+  print("".ljust(76, "-"))
+  for a in accts {
+    if not has_login_shell(a["shell"]) { continue }
+    let tag = ""
+    if a["uid"] == 0 { tag = "  <- UID 0 (root)" }
+    print("  " + a["name"].ljust(18) + ("uid " + str(a["uid"])).ljust(10) + a["shell"] + tag)
+  }
+  if len(keyrows) > 0 {
+    print("")
+    print("  SSH keys installed:")
+    for k in keyrows {
+      let note = ""
+      if k["restricted"] > 0 {
+        note = "  (" + str(k["restricted"]) + " restricted to a forced command)"
+      }
+      print("    " + k["user"].ljust(16) + str(k["open"]) + " unrestricted" + note)
+      for c in k["comments"] {
+        let mark = "- "
+        if c["restricted"] { mark = "- [forced command] " }
+        print("      " + mark + c["comment"])
+      }
+    }
+  }
+
+  print("")
+  print("ESCALATION")
+  print("".ljust(76, "-"))
+  if len(grants) == 0 { print("  no sudo grants found") }
+  for g in grants {
+    let flags = ""
+    if g["nopasswd"] { flags = flags + " NOPASSWD" }
+    if not g["exists"] { flags = flags + " [NO SUCH ACCOUNT]" }
+    print("  " + g["who"].ljust(20) + g["file"] + flags)
+  }
+  if sh["readable"] {
+    print("")
+    print("  passwords: " + str(sh["set"]) + " set, " + str(sh["locked"])
+          + " locked, " + str(len(sh["empty"])) + " empty")
+  }
+
+  print("")
+  if len(sorted_hits) == 0 {
+    print("Nothing concerning: one UID 0 account, no empty passwords, no sudo")
+    print("grants for accounts that do not exist.")
+    return 0
+  }
+  print("FINDINGS")
+  print("".ljust(76, "-"))
+  let bad = 0
+  for h in sorted_hits {
+    if h["sev"] == "bad" { bad = bad + 1 }
+    print("  " + h["sev"].ljust(6) + h["kind"] + "  [" + h["who"] + "]")
+    print("         " + h["detail"])
+    print("")
+  }
+  print(str(len(sorted_hits)) + " finding(s), " + str(bad) + " serious")
+  return 0
+}
+
+main()

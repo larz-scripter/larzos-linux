@@ -1,0 +1,23 @@
+# larz-time - Whether the clock is synchronised, not just whether NTP runs
+#
+# "NTP service: active" and "System clock synchronized: yes" are two different
+# facts and the first does not imply the second - a time daemon can run for
+# months having never reached a server, usually because outbound UDP 123 is
+# blocked. A wrong clock shows up as TLS errors, rejected TOTP codes and logs
+# that will not line up, and gets debugged somewhere else first.
+
+import "larzos/pkg" as pkg
+
+pkg.package({
+  "name":    "larz-time",
+  "version": "0.1.0",
+  "summary": "Whether the clock is synchronised, not just whether NTP runs",
+  "arch":    "all",
+  "section": "admin",
+  "depends": ["larzscript", "curl"],
+  "build":   [],
+  "install": [
+    "install -Dm755 files/larz-time    $DESTDIR/usr/bin/larz-time",
+    "install -Dm644 files/larz-time.lz $DESTDIR/usr/lib/larzos/larz-time.lz",
+  ],
+})

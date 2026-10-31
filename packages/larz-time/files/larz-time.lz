@@ -1,0 +1,269 @@
+# larz-time - is this machine's clock actually right?
+#
+# A wrong clock does not announce itself. It makes TLS handshakes fail with
+# certificate errors that look like a certificate problem, TOTP codes get
+# rejected as wrong, log lines from two hosts refuse to line up, and cron fire
+# at the wrong hour or twice. Every one of those gets debugged somewhere else
+# first.
+#
+# The distinction this is built around is the same one that keeps coming up:
+# `timedatectl` reports "NTP service: active" and "System clock synchronized"
+# as two separate facts, and people read the first as if it meant the second.
+# A time daemon can be running happily and have never once agreed with a
+# server - blocked UDP 123 is the usual reason, and from inside the machine it
+# looks exactly like working.
+#
+# It also measures the offset against an outside reference, because the only
+# way to know a clock is right is to compare it with something else.
+
+let MAX_OK_SKEW = 2           # seconds against an external reference
+let MAX_WARN_SKEW = 30
+
+fn tokens(line) {
+  let out = []
+  for p in line.replace("\t", " ").split(" ") {
+    if p != "" { out.push(p) }
+  }
+  return out
+}
+
+fn is_num(s) {
+  if s == "" { return false }
+  let i = 0
+  while i < len(s) {
+    if not "0123456789".contains(s[i]) { return false }
+    i = i + 1
+  }
+  return true
+}
+
+fn abs_int(n) {
+  if n < 0 { return 0 - n }
+  return n
+}
+
+# timedatectl prints "Key: value" lines; take the value for a key
+fn tdc(raw, key) {
+  for line in raw.split("\n") {
+    let t = line.strip()
+    if not t.contains(":") { continue }
+    let k = t.split(":")[0].strip()
+    if k != key { continue }
+    return t[len(t.split(":")[0]) + 1:len(t)].strip()
+  }
+  return ""
+}
+
+# ---------------------------------------------------- external reference
+
+# An HTTPS Date header is second-resolution and good enough: the failures that
+# matter are minutes and hours out, not milliseconds. Several hosts are tried
+# so one being unreachable is not mistaken for a correct clock.
+fn external_offset() {
+  for host in ["https://cloudflare.com", "https://www.google.com",
+               "https://www.debian.org"] {
+    let hdr = capture("curl -sI --max-time 8 " + host + " 2>/dev/null | grep -i '^date:'")
+    let t = hdr.strip()
+    if t == "" { continue }
+    let datestr = t[5:len(t)].strip()
+    let e = capture("date -d '" + datestr.replace("'", "") + "' +%s 2>/dev/null").strip()
+    if not is_num(e) { continue }
+    return {"ok": true, "offset": time() - int(e), "source": host}
+  }
+  return {"ok": false, "offset": 0, "source": ""}
+}
+
+fn daemon_info() {
+  # whichever of the three is present, and what it says about itself
+  if capture("command -v chronyc 2>/dev/null").strip() != "" {
+    let out = capture("chronyc tracking 2>/dev/null")
+    if out.strip() != "" {
+      let off = ""
+      for line in out.split("\n") {
+        if line.lower().starts_with("last offset") {
+          off = line.split(":")[1].strip()
+        }
+      }
+      return {"name": "chrony", "detail": "last offset " + off}
+    }
+    return {"name": "chrony", "detail": "installed but not answering"}
+  }
+  if capture("command -v ntpq 2>/dev/null").strip() != "" {
+    let peers = capture("ntpq -p 2>/dev/null | wc -l").strip()
+    return {"name": "ntpd", "detail": peers + " line(s) of peer output"}
+  }
+  let st = capture("systemctl is-active systemd-timesyncd 2>/dev/null").strip()
+  if st != "" {
+    return {"name": "systemd-timesyncd", "detail": "unit is " + st}
+  }
+  return {"name": "none found", "detail": "no chrony, ntpd or systemd-timesyncd"}
+}
+
+fn add(hits, sev, kind, detail) {
+  hits.push({"sev": sev, "kind": kind, "detail": detail})
+  return 0
+}
+
+fn rank(s) {
+  if s == "bad" { return 0 }
+  if s == "warn" { return 1 }
+  return 2
+}
+
+fn jesc(s) {
+  return s.replace("\\", "\\\\").replace("\"", "\\\"")
+}
+
+fn main() {
+  let as_j = false
+  let skip_net = false
+  for a in args {
+    if a == "--json" { as_j = true }
+    if a == "--no-net" { skip_net = true }
+    if a == "-h" or a == "--help" {
+      print("larz-time - is this machine's clock actually right?")
+      print("")
+      print("usage: larz-time [--no-net] [--json]")
+      print("")
+      print("  --no-net  skip the external comparison (no outbound request)")
+      print("  --json    machine-readable output")
+      print("")
+      print("\"NTP service: active\" and \"System clock synchronized: yes\" are")
+      print("two different facts, and the first does not imply the second - a")
+      print("time daemon can run for months having never reached a server.")
+      print("This reports both, and measures the offset against an outside")
+      print("reference, because the only way to know a clock is right is to")
+      print("compare it with something else.")
+      return 0
+    }
+  }
+
+  if capture("command -v timedatectl 2>/dev/null").strip() == "" {
+    print("larz-time: timedatectl is not present (not a systemd machine).")
+    print("Falling back to the external comparison only.")
+  }
+
+  let raw = capture("timedatectl 2>/dev/null")
+  let synced = tdc(raw, "System clock synchronized")
+  let ntp = tdc(raw, "NTP service")
+  let tz = tdc(raw, "Time zone")
+  let rtc_local = tdc(raw, "RTC in local TZ")
+  let dmn = daemon_info()
+  let ext = {"ok": false, "offset": 0, "source": ""}
+  if not skip_net { ext = external_offset() }
+
+  let hits = []
+
+  # the distinction the whole tool exists for
+  if ntp != "" and ntp != "active" {
+    add(hits, "warn", "no time daemon is running",
+        "NTP service is \"" + ntp + "\" - nothing is keeping this clock right")
+  }
+  if synced != "" and synced != "yes" {
+    if ntp == "active" {
+      add(hits, "bad", "NTP is running but the clock has never synchronised",
+          "\"NTP service: active\" with \"System clock synchronized: " + synced
+          + "\" - the daemon is up and is not reaching a server. Outbound UDP 123 "
+          + "being blocked is the usual cause, and from in here it looks like working.")
+    }
+    else {
+      add(hits, "bad", "the clock is not synchronised",
+          "System clock synchronized: " + synced)
+    }
+  }
+
+  if rtc_local == "yes" {
+    add(hits, "warn", "the hardware clock is in local time",
+        "RTC in local TZ - this drifts across daylight-saving changes and "
+        + "confuses anything dual-booting")
+  }
+
+  if ext["ok"] {
+    let off = ext["offset"]
+    let a = abs_int(off)
+    if a > MAX_WARN_SKEW {
+      add(hits, "bad", "the clock is " + str(a) + " seconds out",
+          "measured against " + ext["source"] + " - TLS handshakes and TOTP "
+          + "codes start failing well before a minute of skew")
+    }
+    else {
+      if a > MAX_OK_SKEW {
+        add(hits, "warn", "the clock is " + str(a) + " seconds out",
+            "measured against " + ext["source"])
+      }
+    }
+  }
+  else {
+    if not skip_net {
+      add(hits, "warn", "could not reach any external reference",
+          "so the offset is unknown - this is not the same as the clock being right")
+    }
+  }
+
+  let sorted_hits = []
+  for h in hits {
+    let i = 0
+    while i < len(sorted_hits) {
+      if rank(h["sev"]) < rank(sorted_hits[i]["sev"]) { break }
+      i = i + 1
+    }
+    sorted_hits.insert(i, h)
+  }
+
+  if as_j {
+    print("{\n  \"synchronized\": \"" + jesc(synced) + "\""
+        + ",\n  \"ntp_service\": \"" + jesc(ntp) + "\""
+        + ",\n  \"timezone\": \"" + jesc(tz) + "\""
+        + ",\n  \"rtc_in_local_tz\": \"" + jesc(rtc_local) + "\""
+        + ",\n  \"daemon\": \"" + jesc(dmn["name"]) + "\""
+        + ",\n  \"external_checked\": " + str(ext["ok"]).lower()
+        + ",\n  \"offset_seconds\": " + str(ext["offset"])
+        + ",\n  \"findings\": " + str(len(sorted_hits)) + "\n}")
+    return 0
+  }
+
+  print("CLOCK")
+  print("".ljust(72, "-"))
+  print("  local time       " + capture("date '+%Y-%m-%d %H:%M:%S %Z'").strip())
+  print("  time zone        " + tz)
+  print("  synchronized     " + synced)
+  print("  NTP service      " + ntp)
+  print("  daemon           " + dmn["name"] + " (" + dmn["detail"] + ")")
+  if ext["ok"] {
+    let off = ext["offset"]
+    let sign = "+"
+    if off < 0 { sign = "-" }
+    print("  external offset  " + sign + str(abs_int(off)) + "s vs " + ext["source"])
+  }
+  else {
+    if skip_net { print("  external offset  (not checked, --no-net)") }
+    else { print("  external offset  could not be measured") }
+  }
+
+  print("")
+  if len(sorted_hits) == 0 {
+    if ext["ok"] {
+      print("The clock is synchronised, a time daemon is running, and it agrees")
+      print("with an outside reference to within " + str(MAX_OK_SKEW) + " seconds.")
+    }
+    else {
+      print("The clock is synchronised and a time daemon is running, but no")
+      print("external comparison was made - so this says the machine believes")
+      print("its clock is right, not that it is.")
+    }
+    return 0
+  }
+  print("FINDINGS")
+  print("".ljust(72, "-"))
+  let bad = 0
+  for h in sorted_hits {
+    if h["sev"] == "bad" { bad = bad + 1 }
+    print("  " + h["sev"].ljust(6) + h["kind"])
+    print("         " + h["detail"])
+    print("")
+  }
+  print(str(len(sorted_hits)) + " finding(s), " + str(bad) + " serious")
+  return 0
+}
+
+main()

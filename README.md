@@ -56,13 +56,13 @@ Then edit `/etc/larzos/system.lz`, run `larz-system plan`, then
 
 ## The diagnostic CLIs
 
-Fourteen standalone tools, each a single Larzscript file, each read-only, each
+Seventeen standalone tools, each a single Larzscript file, each read-only, each
 installable on a stock Debian/Ubuntu box without converting the machine:
 
 ```sh
 sudo apt install larz-ports larz-cron larz-secrets larz-disk larz-certs \
                  larz-perms larz-net larz-www larz-dns larz-units larz-logs \
-                 larz-updates larz-mem larz-fs
+                 larz-updates larz-mem larz-fs larz-users larz-backup larz-time
 ```
 
 **`larz-ports`** — what is listening, and who can reach it. `ss` lists sockets;
@@ -270,6 +270,58 @@ Verified against all three with real failures built in a privileged container:
 a 128-inode filesystem filled to 100%, a read-only remount while fstab said
 writable, and an unmounted fstab entry.
 
+
+**`larz-users`** — who can log in, and who can become root. That picture is
+assembled from four places nobody reads together: `passwd`/`shadow`, `sudoers`,
+*every* `authorized_keys`, and `lastlog`. Two findings nothing else gives you:
+
+- **a sudo grant for a user who does not exist.** It looks harmless and it means
+  the day anyone creates an account by that name they get root — with
+  `NOPASSWD`, without typing anything. Cloud images ship these.
+- **SSH keys split into restricted and open.** A key with a forced command is a
+  deploy hook; a bare key is a person with a root shell. Counting them together
+  hides the only distinction that matters:
+
+```
+SSH keys installed:
+  root            4 unrestricted  (1 restricted to a forced command)
+    - earnifyhubmailer-server1
+    - [forced command] larzos-linux-ci-deploy
+    - root@localhost
+```
+
+**`larz-backup`** — the failure here is not "no backups". It is a backup job
+that is scheduled, has been for two years, and last succeeded in March —
+because **a backup that fails quietly produces exactly as much output as one
+that works.** So it finds the backup machinery and asks only the question that
+matters: when did it last succeed?
+
+It is careful about one thing. It can only see backups taken *from inside* the
+machine, so when it finds nothing it says it found nothing — not that nothing
+exists:
+
+```
+NOTHING ON THIS MACHINE APPEARS TO BACK ANYTHING UP.
+That is worth confirming rather than assuming either way, because
+this tool can only see backups taken from inside the machine.
+```
+
+It also ignores the jobs that match the word "backup" and back up none of your
+data — `dpkg-db-backup` ships on every Debian system, and counting it would
+suppress that verdict exactly where it is true.
+
+**`larz-time`** — `timedatectl` reports **"NTP service: active"** and
+**"System clock synchronized: yes"** as two separate facts, and people read the
+first as if it meant the second. A time daemon can run for months having never
+once reached a server — blocked outbound UDP 123 is the usual reason, and from
+inside the machine it looks exactly like working.
+
+It reports both, and measures the offset against an outside reference, because
+the only way to know a clock is right is to compare it with something else. With
+`--no-net` it says so rather than claiming agreement it never tested. A wrong
+clock surfaces as TLS certificate errors, rejected TOTP codes and logs that
+will not line up — each of which gets debugged somewhere else first.
+
 ---
 
 ## Other Debian/Ubuntu-family distributions
@@ -374,8 +426,8 @@ packages/              the distro's own packages (larz-desktop, larz-ai, larzsh,
                        larz-ports / larz-cron / larz-secrets / larz-disk /
                        larz-certs / larz-perms / larz-net / larz-www /
                        larz-dns / larz-units / larz-logs / larz-updates /
-                       larz-mem / larz-fs — the fourteen read-only
-                       diagnostic CLIs)
+                       larz-mem / larz-fs / larz-users / larz-backup /
+                       larz-time — the seventeen read-only diagnostic CLIs)
 windows/               LarzOS.exe — the rebranded WSL distro-launcher + MSIX
 docs/                  design notes and the system.lz schema
 ```
