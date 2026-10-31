@@ -2,6 +2,61 @@
 
 Newest first. Mirrored to <https://larzos.com/larzos-linux/>.
 
+## 2026-10-31 - three diagnostic CLIs (larz-ports, larz-cron, larz-secrets)
+
+- `larz doctor` already covers identity, engine, AI, packages, wallet and disk.
+  These three fill the gaps it leaves, and each is one self-contained
+  Larzscript file with no imports, so they install and run on a stock
+  Debian/Ubuntu box without converting the machine.
+- **`larz-ports`** reads `/proc/net/tcp{,6}` directly and gives every LISTEN
+  socket a verdict: `EXPOSED` (bound to `0.0.0.0` or `::`), `IFACE` (one
+  address) or `LOCAL` (loopback). `ss` lists sockets but will not tell you which
+  of them a stranger can reach, which is the only question that matters. The hex
+  in `/proc` is decoded with digit arithmetic because the language has no
+  bitwise operators, and the IPv4 octets are reversed (host byte order).
+  Verified against `ss -ltnH` on a live box: 40 sockets to `ss`'s 40, and an
+  identical exposed-port set (22 80 443 8001 8011 8130 8791).
+- **`larz-cron`** collects all six places scheduled work hides - `/etc/crontab`,
+  `/etc/cron.d`, every user's spool crontab, the three `run-parts` directories
+  and systemd timers - and renders the cron fields as a sentence. On a box with
+  56 jobs it describes all 56; anything it cannot describe confidently falls
+  back to the raw expression, since a wrong sentence is worse than the syntax.
+  Three bugs worth recording: `/etc/crontab` is **tab**-separated, so splitting
+  on spaces left whole rows unparsed and shifted the user field; the systemd
+  property is `TimersCalendar` (wrapped in `{ OnCalendar=... ; next_elapse=... }`),
+  not `OnCalendar`, which returns empty; and a day-of-week range printed raw
+  ("weekly on 1-5") reads as once a week when it means five times.
+- **`larz-secrets`** walks a tree, separates a real credential from a
+  placeholder, and prints the file mode beside each finding - the same secret in
+  a `600` file and a `644` file are different problems. Values are always masked
+  to their first and last two characters, so output is safe to paste into a
+  ticket. Measured on a fixture of 10 planted credentials and 12 lookalike
+  placeholders: **10 found, 0 false positives**. Getting there took five rules,
+  each from a real false positive rather than a guess:
+  - `"secret"` cannot be a substring placeholder, or the real password
+    `Sup3rSecretPw99` is discarded for containing it. Exact-match and
+    substring placeholder lists are now separate.
+  - a value with whitespace is a command line
+    (`/p:PackageCertificatePassword=larzos /m /nologo`), not a credential.
+  - a value with `$`, `(` or `.get` is a variable reference or a code
+    expression (`"$AUTH_TOKEN"`, `usage.get("prompt_tokens", 0)`).
+  - `!=` / `==` mean the line *compares* a secret, not defines one;
+    splitting on `=` invented a value out of a conditional.
+  - in a source file a credential literal is quoted, so an unquoted
+    right-hand side is an identifier (`principal.api_key_id`). Config formats
+    legitimately leave values bare, so the rule applies only to code.
+  - `-` and `_` are word separators, not entropy, so a kebab-case English
+    phrase (`"http-endpoint-no-token"`) no longer looks random.
+  Those rules took a real tree from 241 findings to 47, all of them in `.env`
+  files, stale `.env.bak-*` copies and test fixtures - and left its own
+  repository reporting clean.
+- All three ship `--json`, since this is the kind of tool that ends up in a cron
+  check. Larzscript 1.42 has no `join()` on strings or lists, so the separator
+  is tracked by hand.
+- Released as 0.1.16 and published to the signed apt repo; verified end to end
+  through a sandboxed `apt-get update` against `https://larzos.com/apt`
+  (signature checked, candidate 0.1.16, deb downloads).
+
 ## 2026-09-10 - LarzOS as its own Windows app (LarzOS.exe + MSIX)
 
 - `windows/` is a fork of Microsoft's `WSL-DistroLauncher` (MIT), rebranded to

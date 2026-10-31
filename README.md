@@ -54,6 +54,61 @@ Repo line: `deb [signed-by=/usr/share/keyrings/larzos-archive-keyring.gpg] https
 Then edit `/etc/larzos/system.lz`, run `larz-system plan`, then
 `sudo larz-system apply`.
 
+## The diagnostic CLIs
+
+Three standalone tools, each a single Larzscript file, each installable on a
+stock Debian/Ubuntu box without converting the machine:
+
+```sh
+sudo apt install larz-ports larz-cron larz-secrets
+```
+
+**`larz-ports`** — what is listening, and who can reach it. `ss` lists sockets;
+it does not tell you which ones a stranger can get to. This reads
+`/proc/net/tcp{,6}` and gives every listener a verdict:
+
+```
+ADDRESS                   PORT  VERDICT PROCESS
+0.0.0.0                     22  EXPOSED 1/systemd
+::                         443  EXPOSED 1012/apache2
+127.0.0.1                 5432  LOCAL   1643/docker-proxy
+```
+
+`EXPOSED` means bound to every interface, `IFACE` to one address, `LOCAL` to
+loopback. `--exposed` shows only the first kind; `--json` feeds a cron check.
+
+**`larz-cron`** — every scheduled job in one list, in English. Scheduled work
+hides in six places (`/etc/crontab`, `/etc/cron.d`, each user's spool crontab,
+the three `run-parts` directories, and systemd timers) and nothing in the base
+system shows them together, so a job you forgot is invisible:
+
+```
+[crontab:root]
+every 20 minutes                  root    /usr/bin/python3 /root/feed_ingest.py
+daily at 02:15, 08:15, 14:15, ... root    /usr/bin/python3 /root/critical.py
+on Mon-Fri at 23:30               root    /usr/bin/python3 /root/digest.py
+```
+
+**`larz-secrets`** — credentials committed into files. The usual way a password
+gets loose is not an attack: someone pastes it into a script to get something
+working and it stays there. This walks a tree, separates a real credential from
+a placeholder, and reports the file mode next to it, because the same secret in
+a `600` file and a `644` file are different problems:
+
+```
+SEVERITY  MODE  WHAT
+critical  644   AWS access key id  WORLD-READABLE
+                ./deploy/app.py:2
+                AK***E1 (21 chars)
+```
+
+It never prints a secret — values are masked to their first and last two
+characters, so the output is safe to paste into a ticket. On its own repository
+it reports nothing; on a fixture of 10 planted credentials and 12 lookalike
+placeholders it finds 10 and flags 0.
+
+---
+
 ## Windows (WSL)
 
 LarzOS ships as a first-class WSL distribution — its own name, icon, first-run
@@ -107,7 +162,10 @@ lib/larzos/            the config engine + realization modules
 lib/larzos/modules/    hostname, locale, users, packages, services, audio, ai
 examples/              reference machine specs (desktop, server)
 packages/              the distro's own packages (larz-desktop, larz-ai, larzsh,
-                       larz-claude-code — `larz code`, Claude Code preinstalled)
+                       larz-claude-code — `larz code`, Claude Code preinstalled,
+                       larz-ports / larz-cron / larz-secrets — the
+                       diagnostic CLIs: exposed sockets, every scheduled
+                       job, hardcoded credentials)
 windows/               LarzOS.exe — the rebranded WSL distro-launcher + MSIX
 docs/                  design notes and the system.lz schema
 ```

@@ -1,0 +1,23 @@
+# larz-secrets - find credentials committed into files.
+#
+# The common way a password gets loose is not an attack: someone pastes it into
+# a script to get something working and it stays there. This walks a tree,
+# distinguishes a real credential from a placeholder, and reports the file mode
+# alongside - the same secret in a 600 file and a 644 file are different
+# problems. Values are always masked, so output is safe to paste into a ticket.
+
+import "larzos/pkg" as pkg
+
+pkg.package({
+  "name":    "larz-secrets",
+  "version": "0.1.0",
+  "summary": "Find hardcoded credentials in a directory tree (values masked)",
+  "arch":    "all",
+  "section": "admin",
+  "depends": ["larzscript"],
+  "build":   [],
+  "install": [
+    "install -Dm755 files/larz-secrets    $DESTDIR/usr/bin/larz-secrets",
+    "install -Dm644 files/larz-secrets.lz $DESTDIR/usr/lib/larzos/larz-secrets.lz",
+  ],
+})
