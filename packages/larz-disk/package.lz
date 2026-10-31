@@ -1,0 +1,23 @@
+# larz-disk - What is eating the disk, and what you can safely delete
+#
+# df says the disk is full and du says which directory is big. Neither answers
+# the question you actually have: how much of this is junk I can remove right
+# now. This reports the heavy directories and files, then separates out the
+# space that is reclaimable - package caches, rotated logs, backup copies,
+# build caches, the journal - and gives the command for each.
+
+import "larzos/pkg" as pkg
+
+pkg.package({
+  "name":    "larz-disk",
+  "version": "0.1.0",
+  "summary": "What is eating the disk, and what you can safely delete",
+  "arch":    "all",
+  "section": "admin",
+  "depends": ["larzscript"],
+  "build":   [],
+  "install": [
+    "install -Dm755 files/larz-disk    $DESTDIR/usr/bin/larz-disk",
+    "install -Dm644 files/larz-disk.lz $DESTDIR/usr/lib/larzos/larz-disk.lz",
+  ],
+})

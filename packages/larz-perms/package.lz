@@ -1,0 +1,23 @@
+# larz-perms - File permissions that hand someone else root
+#
+# Not "every file with an odd mode" - that list is long, mostly harmless and
+# therefore ignored. This checks the specific cases that are an escalation
+# path: a root cron job whose script a non-root user can edit, a systemd unit
+# writable by non-root, an SSH private key readable by others, a SUID binary
+# no package owns, world-writable paths outside the sticky temp dirs.
+
+import "larzos/pkg" as pkg
+
+pkg.package({
+  "name":    "larz-perms",
+  "version": "0.1.0",
+  "summary": "File permissions that hand someone else root",
+  "arch":    "all",
+  "section": "admin",
+  "depends": ["larzscript"],
+  "build":   [],
+  "install": [
+    "install -Dm755 files/larz-perms    $DESTDIR/usr/bin/larz-perms",
+    "install -Dm644 files/larz-perms.lz $DESTDIR/usr/lib/larzos/larz-perms.lz",
+  ],
+})

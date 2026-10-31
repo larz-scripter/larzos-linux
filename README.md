@@ -56,11 +56,12 @@ Then edit `/etc/larzos/system.lz`, run `larz-system plan`, then
 
 ## The diagnostic CLIs
 
-Three standalone tools, each a single Larzscript file, each installable on a
-stock Debian/Ubuntu box without converting the machine:
+Eight standalone tools, each a single Larzscript file, each read-only, each
+installable on a stock Debian/Ubuntu box without converting the machine:
 
 ```sh
-sudo apt install larz-ports larz-cron larz-secrets
+sudo apt install larz-ports larz-cron larz-secrets larz-disk \
+                 larz-certs larz-perms larz-net larz-www
 ```
 
 **`larz-ports`** — what is listening, and who can reach it. `ss` lists sockets;
@@ -106,6 +107,68 @@ It never prints a secret — values are masked to their first and last two
 characters, so the output is safe to paste into a ticket. On its own repository
 it reports nothing; on a fixture of 10 planted credentials and 12 lookalike
 placeholders it finds 10 and flags 0.
+
+
+**`larz-disk`** — what is eating the disk, and what you can delete. `df` says
+the disk is full and `du` says which directory is big; neither answers the
+question you actually have at 2am. This reports the heavy directories and
+files, then separates out the space that is *reclaimable* — package caches,
+rotated logs, the journal, backup copies, build caches — and gives the command
+for each:
+
+```
+RECLAIMABLE - safe to remove on a running system
+    1.9G  systemd journal
+          $ sudo journalctl --vacuum-size=200M
+  862.0M  Playwright browsers
+          $ rm -rf /root/.cache/ms-playwright
+
+About 4.7G is reclaimable without touching anything live.
+```
+
+**`larz-certs`** — TLS expiry, on disk *and as actually served*. Two outages
+hide here. The obvious one is a certificate nobody renewed. The quieter one is
+a certificate that renewed perfectly and was never loaded, because nothing
+reloaded the web server: the files on disk are correct, every check that reads
+those files passes, and visitors keep getting the old certificate. `--served`
+connects to :443 and compares, and it tells a CDN in front of the origin apart
+from a stale web server by comparing issuers:
+
+```
+OK           89  Jan 29 10:51:05 2027 GMT  gateway.example.com
+                 *** SERVED CERT IS OLDER: Nov  9 08:11:01 2026 GMT
+                 *** renewed on disk but never loaded - reload the web server
+```
+
+That is not a hypothetical example — it is the first thing this tool found on
+the machine it was written on.
+
+**`larz-perms`** — permissions that hand someone else root. Deliberately not
+"every file with an odd mode": that list is long, mostly harmless, and
+therefore ignored. It checks the cases that are an escalation path — a root
+cron job whose script a non-root user can edit, a systemd unit writable by
+non-root, an SSH private key readable by others, a SUID binary no package owns,
+world-writable paths outside the sticky temp dirs.
+
+**`larz-net`** — the outbound counterpart to `larz-ports`. That one answers
+what can reach you; this answers what you are reaching, and which process is
+doing it. Connections are grouped by peer and process, so a connection pool's
+hundred sockets become one line, and peers inside the network are separated
+from peers on the internet.
+
+**`larz-www`** — files in a web root the server will hand to anyone. A
+sensitive file *on disk* in a document root is untidy; one the server actually
+*returns over HTTP* is a disclosure. Every "find the .env in your webroot"
+one-liner only finds the first. This locates each candidate and then requests
+it through the web server, so the report distinguishes the two:
+
+```
+STATUS    SEVERITY  ON DISK  WHAT
+EXPOSED   critical        1  backup of a PHP file - served as source  (*.php.bak*)
+                    HTTP 200  /control.php.bak
+blocked   critical      400  dated backup copy  (*.bak-*)
+                    HTTP 403  /emi-calculator/index.html.bak-2026-09-15
+```
 
 ---
 
@@ -163,9 +226,9 @@ lib/larzos/modules/    hostname, locale, users, packages, services, audio, ai
 examples/              reference machine specs (desktop, server)
 packages/              the distro's own packages (larz-desktop, larz-ai, larzsh,
                        larz-claude-code — `larz code`, Claude Code preinstalled,
-                       larz-ports / larz-cron / larz-secrets — the
-                       diagnostic CLIs: exposed sockets, every scheduled
-                       job, hardcoded credentials)
+                       larz-ports / larz-cron / larz-secrets / larz-disk /
+                       larz-certs / larz-perms / larz-net / larz-www — the
+                       read-only diagnostic CLIs)
 windows/               LarzOS.exe — the rebranded WSL distro-launcher + MSIX
 docs/                  design notes and the system.lz schema
 ```

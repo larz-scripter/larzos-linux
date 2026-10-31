@@ -1,0 +1,410 @@
+# larz-perms - file permissions that hand someone else root.
+#
+# This is deliberately not "every file with an odd mode" - that list is long,
+# mostly harmless, and therefore ignored. It checks the specific cases where a
+# wrong mode is a privilege-escalation path:
+#
+#   * a root cron job whose script a non-root user can edit. Anyone who can
+#     write that file runs commands as root on the next tick. This is the most
+#     reliably overlooked hole on a server with deploy users.
+#   * a systemd unit or its ExecStart target writable by non-root - same thing
+#     via a different scheduler.
+#   * an SSH private key readable by anyone but its owner (sshd will also
+#     refuse to use it, so this breaks things as well as leaking them).
+#   * a SUID or SGID binary that no package owns - the shape a planted backdoor
+#     has, and nothing a normal install produces.
+#   * world-writable files and directories outside the sticky temp dirs.
+#   * a home directory other users can read or write.
+
+fn tokens(line) {
+  let out = []
+  for p in line.replace("\t", " ").split(" ") {
+    if p != "" { out.push(p) }
+  }
+  return out
+}
+
+# -L dereferences: without it stat reports the symlink's own mode, which is
+# always 777, so every symlinked binary read as world-writable.
+fn mode_of(path) {
+  let m = capture("stat -L -c %a '" + path + "' 2>/dev/null").strip()
+  if m == "" { return "" }
+  return m
+}
+
+fn owner_of(path) {
+  return capture("stat -L -c '%U:%G' '" + path + "' 2>/dev/null").strip()
+}
+
+fn is_regular(path) {
+  return capture("stat -L -c %F '" + path + "' 2>/dev/null").strip() == "regular file"
+}
+
+fn digit(ch) {
+  let i = 0
+  while i < 10 {
+    if "0123456789"[i] == ch { return i }
+    i = i + 1
+  }
+  return 0
+}
+
+# the last three octal digits are user/group/other; a leading digit is setuid
+fn perm_triplet(mode) {
+  if len(mode) < 3 { return [0, 0, 0] }
+  let n = len(mode)
+  return [digit(mode[n - 3]), digit(mode[n - 2]), digit(mode[n - 1])]
+}
+
+fn other_can_write(mode) {
+  let t = perm_triplet(mode)
+  return t[2] >= 2 and (t[2] == 2 or t[2] == 3 or t[2] == 6 or t[2] == 7)
+}
+
+fn group_can_write(mode) {
+  let t = perm_triplet(mode)
+  return t[1] == 2 or t[1] == 3 or t[1] == 6 or t[1] == 7
+}
+
+fn other_can_read(mode) {
+  let t = perm_triplet(mode)
+  return t[2] >= 4
+}
+
+fn group_can_read(mode) {
+  let t = perm_triplet(mode)
+  return t[1] >= 4
+}
+
+# the same script can be scheduled from a dozen crontab lines; report it once
+let SEEN = {}
+
+fn add(hits, sev, what, path, detail) {
+  let k = what + "|" + path
+  if SEEN.has(k) { return 0 }
+  SEEN[k] = true
+  hits.push({"sev": sev, "what": what, "path": path, "detail": detail,
+             "mode": mode_of(path), "owner": owner_of(path)})
+  return 0
+}
+
+# ---------------------------------------------------- root jobs, wrong owner
+#
+# The question is not "is this file odd" but "could a non-root account change
+# what root will execute". So: for every command root runs on a schedule, is
+# the script itself writable by group or other, or owned by someone else.
+
+let INTERPRETERS = ["python", "python2", "python3", "perl", "ruby", "node",
+                    "bash", "sh", "dash", "zsh", "env", "php", "awk", "nice",
+                    "flock", "timeout", "ionice", "larzscript", "test"]
+
+fn basename(p) {
+  let parts = p.split("/")
+  if len(parts) == 0 { return p }
+  return parts[len(parts) - 1]
+}
+
+fn is_interpreter(p) {
+  let b = basename(p)
+  for x in INTERPRETERS {
+    if b == x { return true }
+  }
+  return false
+}
+
+# The interpreter is normally the first absolute path on the line; the thing a
+# non-root user could tamper with is the script it runs. Device paths come from
+# redirects (> /dev/null) and are not scripts at all.
+fn script_in(cmdline) {
+  let fallback = ""
+  for t in tokens(cmdline) {
+    let p = t
+    if not p.starts_with("/") { continue }
+    if p.starts_with("/dev/") or p.starts_with("/proc/") or p.starts_with("/sys/") { continue }
+    if not file_exists(p) { continue }
+    if not is_regular(p) { continue }
+    if is_interpreter(p) {
+      if fallback == "" { fallback = p }
+      continue
+    }
+    return p
+  }
+  return fallback
+}
+
+fn check_root_jobs(hits) {
+  let files = []
+  if file_exists("/etc/crontab") { files.push(["/etc/crontab", true]) }
+  if file_exists("/etc/cron.d") {
+    for f in listdir("/etc/cron.d") {
+      if f.starts_with(".") { continue }
+      files.push(["/etc/cron.d/" + f, true])
+    }
+  }
+  if file_exists("/var/spool/cron/crontabs/root") {
+    files.push(["/var/spool/cron/crontabs/root", false])
+  }
+
+  for spec in files {
+    let path = spec[0]
+    if not is_regular(path) { continue }
+    # the crontab itself must not be writable by anyone but root
+    let m = mode_of(path)
+    if m != "" {
+      if other_can_write(m) or group_can_write(m) {
+        add(hits, "critical", "root crontab is writable by group or other", path,
+            "anyone who can write this file runs commands as root")
+      }
+    }
+    let body = ""
+    body = read_file(path)
+    for raw in body.split("\n") {
+      let line = raw.strip()
+      if line == "" or line.starts_with("#") { continue }
+      let sc = script_in(line)
+      if sc == "" { continue }
+      let sm = mode_of(sc)
+      let so = owner_of(sc)
+      if sm == "" { continue }
+      if other_can_write(sm) {
+        add(hits, "critical", "root cron script is world-writable", sc,
+            "scheduled from " + path)
+      }
+      else {
+        if group_can_write(sm) and not so.starts_with("root:root") {
+          add(hits, "critical", "root cron script is group-writable and not root-owned", sc,
+              "scheduled from " + path + ", owner " + so)
+        }
+        else {
+          if not so.starts_with("root:") {
+            add(hits, "high", "root runs a script owned by another user", sc,
+                "scheduled from " + path + ", owner " + so)
+          }
+        }
+      }
+    }
+  }
+  return 0
+}
+
+fn check_units(hits) {
+  let out = capture("systemctl show -p FragmentPath,ExecStart --value $(systemctl list-units --type=service --state=running --no-legend --no-pager 2>/dev/null | awk '{print $1}' | head -60) 2>/dev/null")
+  # a unit file writable by non-root is the same escalation as a cron script
+  for d in ["/etc/systemd/system", "/lib/systemd/system"] {
+    if not file_exists(d) { continue }
+    for f in listdir(d) {
+      if not f.ends_with(".service") { continue }
+      let p = d + "/" + f
+      # a masked unit is a symlink to /dev/null: dereferencing gives 666, and
+      # a unit that runs nothing cannot be an escalation path
+      if not is_regular(p) { continue }
+      let m = mode_of(p)
+      if m == "" { continue }
+      if other_can_write(m) {
+        add(hits, "critical", "systemd unit is world-writable", p,
+            "defines what root executes")
+      }
+      else {
+        if group_can_write(m) and not owner_of(p).starts_with("root:root") {
+          add(hits, "high", "systemd unit is group-writable and not root-owned", p,
+              "owner " + owner_of(p))
+        }
+      }
+    }
+  }
+  return 0
+}
+
+# --------------------------------------------------------------- ssh keys
+
+fn check_ssh(hits) {
+  let dirs = capture("getent passwd | awk -F: '$3>=0 {print $6}' | sort -u 2>/dev/null")
+  for home in dirs.split("\n") {
+    let h = home.strip()
+    if h == "" or not file_exists(h + "/.ssh") { continue }
+    for f in listdir(h + "/.ssh") {
+      let p = h + "/.ssh/" + f
+      if f.ends_with(".pub") or f == "known_hosts" or f == "config" { continue }
+      if f == "authorized_keys" {
+        let am = mode_of(p)
+        if am != "" {
+          if other_can_write(am) or group_can_write(am) {
+            add(hits, "critical", "authorized_keys is writable by group or other", p,
+                "anyone who can write it can add their own login key")
+          }
+        }
+        continue
+      }
+      if not is_regular(p) { continue }
+      # decide from the contents: "known_hosts.old" is not a key, and a key is
+      # not always named id_something
+      let head = capture("head -c 120 '" + p + "' 2>/dev/null")
+      if not head.contains("PRIVATE KEY") { continue }
+      let m = mode_of(p)
+      if m == "" { continue }
+      # a private key must be 600; sshd refuses looser modes anyway
+      if other_can_read(m) or group_can_read(m) {
+        add(hits, "critical", "private key readable by group or other", p,
+            "should be 600; sshd will also refuse to use it")
+      }
+    }
+  }
+  return 0
+}
+
+# ------------------------------------------------- suid with no package home
+
+fn check_suid(hits) {
+  # container image layers carry their own SUID binaries; they are not this
+  # host's attack surface and they bury the real findings
+  let out = capture("find / -xdev \\( -perm -4000 -o -perm -2000 \\) -type f 2>/dev/null | grep -vE 'containerd|/docker/|/snapshots/|/overlay2/|/lxc/|/var/lib/machines/' | head -200")
+  for line in out.split("\n") {
+    let p = line.strip()
+    if p == "" { continue }
+    # every SUID binary on a normal system belongs to a package; one that does
+    # not is either hand-built or planted, and both deserve a look.
+    # usrmerge means dpkg records /bin/foo for a file at /usr/bin/foo, so the
+    # un-prefixed path has to be tried as well or every merged binary looks
+    # unpackaged.
+    let owned = capture("dpkg -S '" + p + "' 2>/dev/null | head -1").strip()
+    if owned == "" and p.starts_with("/usr/") {
+      owned = capture("dpkg -S '" + p[4:len(p)] + "' 2>/dev/null | head -1").strip()
+    }
+    if owned == "" {
+      add(hits, "high", "SUID/SGID binary owned by no package", p,
+          "nothing installed this - verify it is meant to be here")
+    }
+  }
+  return 0
+}
+
+# ------------------------------------------------- world-writable and homes
+
+fn check_world_writable(hits) {
+  # -perm -0002 and not sticky: a sticky directory (/tmp) is world-writable by
+  # design, so including it would bury the real findings
+  let out = capture("find /etc /usr /opt /srv /var/www /root -xdev -perm -0002 ! -type l ! -perm -1000 2>/dev/null | head -60")
+  for line in out.split("\n") {
+    let p = line.strip()
+    if p == "" { continue }
+    let dup = false
+    for h in hits {
+      if h["path"] == p { dup = true }
+    }
+    if dup { continue }
+    add(hits, "high", "world-writable", p, "anyone on the box can change this")
+  }
+  return 0
+}
+
+fn check_homes(hits) {
+  let out = capture("getent passwd | awk -F: '$3>=1000 && $3<65534 {print $1\":\"$6}' 2>/dev/null")
+  for line in out.split("\n") {
+    let t = line.strip()
+    if t == "" or not t.contains(":") { continue }
+    let user = t.split(":")[0]
+    let home = t.split(":")[1]
+    if home == "" or not file_exists(home) { continue }
+    let m = mode_of(home)
+    if m == "" { continue }
+    if other_can_write(m) {
+      add(hits, "critical", "home directory is world-writable", home, "user " + user)
+    }
+    else {
+      if other_can_read(m) {
+        add(hits, "medium", "home directory is readable by every user", home,
+            "user " + user + "; 750 or 700 is usual")
+      }
+    }
+  }
+  return 0
+}
+
+fn sev_rank(s) {
+  if s == "critical" { return 0 }
+  if s == "high" { return 1 }
+  if s == "medium" { return 2 }
+  return 3
+}
+
+fn jesc(s) {
+  return s.replace("\\", "\\\\").replace("\"", "\\\"")
+}
+
+fn main() {
+  let as_j = false
+  for a in args {
+    if a == "--json" { as_j = true }
+    if a == "-h" or a == "--help" {
+      print("larz-perms - file permissions that hand someone else root")
+      print("")
+      print("usage: larz-perms [--json]")
+      print("")
+      print("Checks the specific modes that are an escalation path, not every")
+      print("odd mode on the disk:")
+      print("  - a root cron job whose script a non-root user can edit")
+      print("  - a systemd unit writable by non-root")
+      print("  - an SSH private key readable by group or other")
+      print("  - a SUID/SGID binary that no package owns")
+      print("  - world-writable files outside the sticky temp dirs")
+      print("  - a home directory other users can read or write")
+      print("")
+      print("Run it with sudo: most of these files are root-only to read.")
+      return 0
+    }
+  }
+
+  let hits = []
+  check_root_jobs(hits)
+  check_units(hits)
+  check_ssh(hits)
+  check_suid(hits)
+  check_world_writable(hits)
+  check_homes(hits)
+
+  let sorted_hits = []
+  for h in hits {
+    let i = 0
+    while i < len(sorted_hits) {
+      if sev_rank(h["sev"]) < sev_rank(sorted_hits[i]["sev"]) { break }
+      i = i + 1
+    }
+    sorted_hits.insert(i, h)
+  }
+
+  if as_j {
+    let out = "[\n"
+    let first = true
+    for h in sorted_hits {
+      if not first { out = out + ",\n" }
+      first = false
+      out = out + "  {\"severity\": \"" + h["sev"] + "\", \"issue\": \"" + jesc(h["what"])
+          + "\", \"path\": \"" + jesc(h["path"]) + "\", \"mode\": \"" + h["mode"]
+          + "\", \"owner\": \"" + h["owner"] + "\", \"detail\": \"" + jesc(h["detail"]) + "\"}"
+    }
+    print(out + "\n]")
+    return 0
+  }
+
+  if len(sorted_hits) == 0 {
+    print("No escalation-shaped permission problems found.")
+    print("(Checked root cron scripts, systemd units, SSH keys, SUID binaries,")
+    print(" world-writable paths and home directories.)")
+    return 0
+  }
+
+  print("SEVERITY  MODE  OWNER            ISSUE")
+  print("".ljust(78, "-"))
+  let crit = 0
+  for h in sorted_hits {
+    if h["sev"] == "critical" { crit = crit + 1 }
+    print(h["sev"].ljust(10) + h["mode"].ljust(6) + h["owner"].ljust(17) + h["what"])
+    print("".ljust(16) + h["path"])
+    print("".ljust(16) + h["detail"])
+    print("")
+  }
+  print(str(len(sorted_hits)) + " finding(s), " + str(crit) + " critical")
+  return 0
+}
+
+main()

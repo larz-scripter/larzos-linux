@@ -1,0 +1,23 @@
+# larz-www - Files in a web root the server will hand to anyone
+#
+# A sensitive file on disk in a document root is untidy; one the server
+# actually returns over HTTP is a disclosure. Those are different problems, and
+# every "find the .env in your webroot" one-liner only finds the first. This
+# locates each candidate and then requests it through the web server, so the
+# report says whether a file is merely present (403/404) or being served (200).
+
+import "larzos/pkg" as pkg
+
+pkg.package({
+  "name":    "larz-www",
+  "version": "0.1.0",
+  "summary": "Files in a web root the server will hand to anyone",
+  "arch":    "all",
+  "section": "web",
+  "depends": ["larzscript"],
+  "build":   [],
+  "install": [
+    "install -Dm755 files/larz-www    $DESTDIR/usr/bin/larz-www",
+    "install -Dm644 files/larz-www.lz $DESTDIR/usr/lib/larzos/larz-www.lz",
+  ],
+})

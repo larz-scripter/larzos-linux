@@ -2,6 +2,71 @@
 
 Newest first. Mirrored to <https://larzos.com/larzos-linux/>.
 
+## 2026-10-31 - five more diagnostic CLIs, and the outage the first one found
+
+Released 0.1.17: `larz-disk`, `larz-certs`, `larz-perms`, `larz-net`,
+`larz-www`. Same shape as the first three - one self-contained Larzscript file
+each, no imports, read-only, `--json` on all of them.
+
+**`larz-certs` found a live outage on the machine it was written on**, which is
+worth recording in full because it is the exact failure the tool exists for.
+
+- Two certificates (`larzos.com`, `gateway.larzos.com`) were 8 days from expiry
+  and certbot had been failing every run: *"All renewals failed"*. Two
+  independent causes:
+  - **`larzos.com`**: certbot's `webroot_path` was `/var/www/larzos` while
+    Apache aliased `/.well-known/acme-challenge/` to `/var/www/letsencrypt`.
+    Certbot wrote the challenge token to a directory the server never served
+    it from, so the CA got a 404. Fixed by pointing `webroot_path` at the
+    directory the alias actually uses, as the other two certificates already
+    did.
+  - **`gateway.larzos.com`**: `000-default.conf` had no `ServerName`, so Apache
+    gave it the *system hostname* - which on this box is `gateway.larzos.com` -
+    and being the first `*:80` vhost it shadowed `gateway.larzos.com.conf`,
+    where the ACME alias lives. Every challenge was answered by the wrong
+    vhost. Fixed with an explicit, deliberately non-resolving `ServerName`; it
+    is still the catch-all default because it is still first.
+- With both fixed, `certbot renew --dry-run` reported *"no renewal failures"*
+  and the real renewal succeeded.
+- **Then `larz-certs --served` immediately caught the second half**: both
+  certificates now had 89 days on disk, and `:443` was still serving the
+  8-day-old one. Nothing reloads Apache after renewal -
+  `/etc/letsencrypt/renewal-hooks/deploy/` was empty. Every file-based check
+  would have called this healthy. Added the deploy hook, reloaded, and
+  `larz-certs --served` now reports *"served on :443 matches this file"*.
+
+The other four:
+
+- **`larz-disk`** separates heavy from *reclaimable*, which is the distinction
+  `du` does not make: package caches, rotated logs, the journal, backup copies,
+  build caches, surplus kernels, docker's own reclaimable figure - each with the
+  command to reclaim it. Verified against `du` to the kilobyte. One real bug
+  fixed: the percentage must be `used/(used+avail)` rounded up, because that is
+  what `df` prints; dividing by the raw total reads ~3 points low and makes the
+  tool look wrong next to `df`.
+- **`larz-perms`** checks escalation paths rather than odd modes. Four
+  false-positive classes had to go first, and each is a trap worth knowing:
+  GNU `stat` reports a **symlink's own mode (always 777)** unless given `-L`, so
+  every symlinked binary read as world-writable; a **masked systemd unit is a
+  symlink to /dev/null**, so dereferencing it yields 666; the first absolute
+  path on a cron line is the **interpreter**, not the script a user could
+  tamper with; and **usrmerge** means dpkg records `/bin/foo` for a file at
+  `/usr/bin/foo`, so a plain `dpkg -S` makes every merged SUID binary look
+  unpackaged. With those handled it reports nothing on a clean box, and a
+  fixture of four deliberate holes fires all four.
+- **`larz-net`** is the egress counterpart to `larz-ports`: outbound
+  connections grouped by peer and process, public peers separated from internal
+  ones. Verified by interleaved sampling against `/proc/net/tcp{,6}` - the
+  delta against the immediately-following kernel read was 0 in every sample,
+  which is the only honest way to check a continuously changing value.
+- **`larz-www`** asks whether a sensitive file in a document root is merely
+  present or actually being served, by requesting each candidate through the
+  web server. On this estate it confirmed 400 `*.bak-*` files present and all
+  **403** - the deny rule added on 2026-10-29 is holding - and a positive
+  control in a root with no deny rule was correctly reported **EXPOSED (200)**.
+  It requests against `127.0.0.1` with a `Host` header, so it tests the origin
+  rather than whatever a CDN in front of it caches.
+
 ## 2026-10-31 - three diagnostic CLIs (larz-ports, larz-cron, larz-secrets)
 
 - `larz doctor` already covers identity, engine, AI, packages, wallet and disk.
