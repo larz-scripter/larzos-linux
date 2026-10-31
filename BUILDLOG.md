@@ -2,6 +2,62 @@
 
 Newest first. Mirrored to <https://larzos.com/larzos-linux/>.
 
+## 2026-10-31 - 0.1.23: larz-users, larz-backup, larz-time
+
+Three more, taking the set to seventeen. Each positive control found a real bug
+in the tool it was testing, which is the whole argument for writing them.
+
+- **`larz-users`** assembles the login and escalation picture from
+  passwd/shadow, sudoers, every authorized_keys and lastlog. Two findings
+  nothing else gives you: **a sudo grant for a user who does not exist** (cloud
+  images ship these - `ubuntu ALL=(ALL) NOPASSWD:ALL` sat in
+  `/etc/sudoers.d/90-cloud-init-users` on this machine with no such account, so
+  creating that name would have handed out passwordless root), and
+  **authorized_keys split into restricted and open**, because a key with a
+  forced command is a deploy hook and a bare key is a person with a root shell.
+  Verified against a container with a second UID 0 account, an emptied
+  password and a NOPASSWD grant planted: all three fired. Two refinements the
+  output needed: `%admin` and `%sudo` ship in Debian's stock sudoers with the
+  group often absent, so the note now says so rather than alarming on every
+  box; and UID 0 was being reported twice, by the generic duplicate-UID check
+  and the specific one.
+- **`larz-backup`** asks when each backup job last *succeeded*, because a
+  backup that fails quietly produces exactly as much output as one that works.
+  Three things it had to get right:
+  - **`dpkg-db-backup` is not a backup of your data.** It ships on every
+    Debian system and matches the word; left in, it suppressed the one verdict
+    that matters - "nothing here backs anything up" - on every stock box. It is
+    now listed separately as ignored, with the reason.
+  - **the log path is not in the last `>`-separated field.** A cron line almost
+    always ends `2>&1`, so splitting on `>` and taking the tail returns `&1`.
+    Caught by the positive control, which reported "nothing records whether it
+    worked" for a job that plainly redirected to a log.
+  - **a failed run matters whenever it happened.** The never-fired check came
+    first and returned, so a timer whose last run exited non-zero was reported
+    as "never fired" instead of "FAILED". Also caught by the control.
+  When it finds nothing it says it found nothing - not that nothing exists -
+  because a hypervisor snapshot or provider volume backup is invisible from
+  inside the machine, and reporting "no backups" without that caveat would be
+  both wrong and alarming.
+- **`larz-time`** is built on the distinction that keeps recurring:
+  `timedatectl` reports "NTP service: active" and "System clock synchronized"
+  as two separate facts, and a time daemon can run for months having never
+  reached a server (blocked outbound UDP 123, which from inside looks exactly
+  like working). It reports both and measures the offset against an external
+  HTTPS `Date` header, since the only way to know a clock is right is to
+  compare it with something else. The skew thresholds are unit-tested across 11
+  cases including negative offsets.
+  One bug worth recording because it is the exact failure this whole series is
+  built to avoid: under `--no-net` the all-clear still read "it agrees with an
+  outside reference to within 2 seconds" - claiming a check that had not run.
+  It now says the machine *believes* its clock is right, which is a different
+  statement.
+
+All three are wired into the daily health card, now at fourteen checks. On this
+machine the card immediately surfaced two things worth a decision: the dead
+`ubuntu` sudo grant, and that nothing visible from inside the box backs anything
+up.
+
 ## 2026-10-31 - 0.1.22: larz-updates, larz-mem, larz-fs
 
 Three more, taking the set to fourteen. All three follow the pattern that has

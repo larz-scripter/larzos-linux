@@ -1,0 +1,396 @@
+# larz-backup - is anything on this machine actually backing up, and did it
+# work recently?
+#
+# The failure this exists for is not "no backups". It is a backup job that
+# exists, is scheduled, has been scheduled for two years, and last succeeded
+# in March. Everything looks configured. `larz-cron` will even list it. Nobody
+# checks the exit status, because a backup that fails quietly produces exactly
+# the same amount of output as one that works.
+#
+# So this finds the backup machinery and then asks the only question that
+# matters: when did it last succeed?
+#
+# One thing it is careful about. It can only see backups taken FROM INSIDE this
+# machine. A hypervisor snapshot, a provider volume backup or a SAN replica are
+# all invisible here, and reporting "no backups" without saying so would be
+# wrong and alarming. If it finds nothing, it says it found nothing - not that
+# nothing exists.
+
+let TOOLS = ["restic", "borg", "borgmatic", "duplicity", "duply", "rsnapshot",
+             "rdiff-backup", "tarsnap", "rclone", "bacula-fd", "amanda",
+             "bareos-fd", "pgbackrest", "wal-g", "mariabackup", "zfs",
+             "btrbk", "timeshift", "kopia"]
+
+# words that make a scheduled command look like a backup
+let PATS = "backup|bkup|restic|borg|duplicity|rsnapshot|rdiff|tarsnap|pgbackrest|wal-g|mysqldump|pg_dump|mariabackup|snapshot|kopia|btrbk|timeshift"
+
+let STALE_HOURS = 48          # a daily backup that has not run in 2 days is late
+
+# Jobs that contain the word "backup" and are not a backup of your data.
+# dpkg-db-backup ships on every Debian system; counting it would suppress the
+# "nothing backs anything up" verdict exactly where that verdict is true.
+let NOT_DATA_BACKUP = ["dpkg-db-backup", "dpkg/dpkg-db", "mandb", "man-db",
+                       "apt-compat", "update-notifier"]
+
+fn tokens(line) {
+  let out = []
+  for p in line.replace("\t", " ").split(" ") {
+    if p != "" { out.push(p) }
+  }
+  return out
+}
+
+fn is_num(s) {
+  if s == "" { return false }
+  let i = 0
+  while i < len(s) {
+    if not "0123456789".contains(s[i]) { return false }
+    i = i + 1
+  }
+  return true
+}
+
+fn age_hours(epoch) {
+  if epoch <= 0 { return -1 }
+  return int((time() - epoch) / 3600)
+}
+
+fn human_age(h) {
+  if h < 0 { return "never / unknown" }
+  if h < 48 { return str(h) + "h ago" }
+  return str(int(h / 24)) + " days ago"
+}
+
+# ------------------------------------------------------------ what is here
+
+fn installed_tools() {
+  let out = []
+  for t in TOOLS {
+    let p = capture("command -v " + t + " 2>/dev/null").strip()
+    if p != "" { out.push({"tool": t, "path": p}) }
+  }
+  return out
+}
+
+# ---------------------------------------------------- scheduled backup jobs
+
+fn cron_files() {
+  let out = []
+  if file_exists("/etc/crontab") { out.push("/etc/crontab") }
+  if file_exists("/etc/cron.d") {
+    for f in listdir("/etc/cron.d") {
+      if f.starts_with(".") or f.contains(".bak") or f.contains(".dpkg-") { continue }
+      out.push("/etc/cron.d/" + f)
+    }
+  }
+  if file_exists("/var/spool/cron/crontabs") {
+    for u in listdir("/var/spool/cron/crontabs") {
+      if u.starts_with(".") { continue }
+      out.push("/var/spool/cron/crontabs/" + u)
+    }
+  }
+  for d in ["/etc/cron.daily", "/etc/cron.weekly", "/etc/cron.hourly", "/etc/cron.monthly"] {
+    if not file_exists(d) { continue }
+    for f in listdir(d) {
+      if f.starts_with(".") or f == "README" { continue }
+      out.push(d + "/" + f)
+    }
+  }
+  return out
+}
+
+# A cron line usually redirects to a log. That log's mtime is the best
+# available answer to "when did this last run" without instrumenting the job.
+fn log_from_cmd(cmd) {
+  # A cron line normally ends "2>&1", so the final ">"-separated part is "&1"
+  # and the log path sits in an earlier one. Scan them all, and prefer
+  # something that actually looks like a log.
+  let parts = cmd.split(">")
+  if len(parts) < 2 { return "" }
+  let best = ""
+  let i = 1
+  while i < len(parts) {
+    for t in tokens(parts[i]) {
+      if not t.starts_with("/") { continue }
+      if t.starts_with("/dev/") { continue }
+      if t.ends_with(".log") { return t }
+      if best == "" { best = t }
+    }
+    i = i + 1
+  }
+  return best
+}
+
+fn mtime_of(path) {
+  let out = capture("stat -c %Y '" + path + "' 2>/dev/null").strip()
+  if is_num(out) { return int(out) }
+  return 0
+}
+
+fn is_system_job(cmd) {
+  for x in NOT_DATA_BACKUP {
+    if cmd.contains(x) { return true }
+  }
+  return false
+}
+
+fn cron_jobs() {
+  let rows = []
+  for path in cron_files() {
+    let raw = capture("grep -hiE '" + PATS + "' '" + path + "' 2>/dev/null | grep -vE '^[[:space:]]*#'")
+    if raw.strip() == "" { continue }
+    for line in raw.split("\n") {
+      let t = line.strip()
+      if t == "" { continue }
+      # the run-parts directories hold scripts, not crontab lines
+      let logf = log_from_cmd(t)
+      let last = 0
+      if logf != "" { last = mtime_of(logf) }
+      rows.push({"source": path, "cmd": t[0:110], "log": logf,
+                 "last": last, "age": age_hours(last),
+                 "system": is_system_job(t)})
+    }
+    # a script in cron.daily etc. that merely MENTIONS backup also counts
+  }
+  return rows
+}
+
+fn timer_jobs() {
+  let rows = []
+  let out = capture("systemctl list-timers --all --no-legend --no-pager 2>/dev/null | grep -iE '"
+                    + PATS + "'")
+  for line in out.split("\n") {
+    let t = line.strip()
+    if t == "" { continue }
+    let unit = ""
+    for p in tokens(t) {
+      if p.ends_with(".timer") { unit = p }
+    }
+    if unit == "" { continue }
+    let svc = unit.replace(".timer", ".service")
+    let lt = capture("systemctl show -p LastTriggerUSec --value '" + unit + "' 2>/dev/null").strip()
+    let res = capture("systemctl show -p Result --value '" + svc + "' 2>/dev/null").strip()
+    let exitst = capture("systemctl show -p ExecMainStatus --value '" + svc + "' 2>/dev/null").strip()
+    # LastTriggerUSec is a human date here, so ask date(1) for the epoch
+    let last = 0
+    if lt != "" and lt != "n/a" {
+      let e = capture("date -d '" + lt.replace("'", "") + "' +%s 2>/dev/null").strip()
+      if is_num(e) { last = int(e) }
+    }
+    rows.push({"unit": unit, "service": svc, "result": res, "exit": exitst,
+               "last": last, "age": age_hours(last),
+               "system": is_system_job(unit)})
+  }
+  return rows
+}
+
+fn add(hits, sev, kind, who, detail) {
+  hits.push({"sev": sev, "kind": kind, "who": who, "detail": detail})
+  return 0
+}
+
+fn rank(s) {
+  if s == "bad" { return 0 }
+  if s == "warn" { return 1 }
+  return 2
+}
+
+fn jesc(s) {
+  return s.replace("\\", "\\\\").replace("\"", "\\\"")
+}
+
+fn main() {
+  let as_j = false
+  let stale = STALE_HOURS
+  let i = 0
+  while i < len(args) {
+    let a = args[i]
+    if a == "--json" { as_j = true }
+    if a == "--stale" {
+      if i + 1 < len(args) {
+        if is_num(args[i + 1]) { stale = int(args[i + 1]) }
+      }
+    }
+    if a == "-h" or a == "--help" {
+      print("larz-backup - is anything backing up, and did it work recently?")
+      print("")
+      print("usage: larz-backup [--stale HOURS] [--json]")
+      print("")
+      print("  --stale H  how old a successful run may be before it counts as")
+      print("             late (default 48 hours)")
+      print("  --json     machine-readable output")
+      print("")
+      print("Finds backup tools, backup-shaped cron jobs and systemd timers,")
+      print("then asks when each last succeeded - because a backup that fails")
+      print("quietly produces exactly as much output as one that works.")
+      print("")
+      print("It can only see backups taken from inside this machine. A")
+      print("hypervisor snapshot or a provider volume backup is invisible")
+      print("here, so \"found nothing\" means exactly that - not that nothing")
+      print("exists.")
+      return 0
+    }
+    i = i + 1
+  }
+
+  let tools = installed_tools()
+  let crons = cron_jobs()
+  let timers = timer_jobs()
+  let hits = []
+
+  for c in crons {
+    if c["system"] { continue }
+    if c["log"] == "" {
+      add(hits, "warn", "scheduled, but nothing records whether it worked", c["source"],
+          "no log redirect in the command, so a silent failure leaves no trace")
+      continue
+    }
+    if c["age"] < 0 {
+      add(hits, "bad", "scheduled, but its log has never been written", c["log"],
+          "from " + c["source"] + " - there is no evidence it has ever run")
+      continue
+    }
+    if c["age"] > stale {
+      add(hits, "bad", "last wrote its log " + human_age(c["age"]), c["log"],
+          "from " + c["source"] + " - scheduled, but apparently not running")
+    }
+  }
+
+  for t in timers {
+    if t["system"] { continue }
+    # a failed run is a finding whenever it happened, so it is checked before
+    # the when-did-it-last-fire question
+    if t["result"] != "" and t["result"] != "success" {
+      add(hits, "bad", "last run FAILED (result=" + t["result"] + ")", t["unit"],
+          "last fired " + human_age(t["age"]) + " - a backup that fails quietly "
+          + "produces as much output as one that works")
+      continue
+    }
+    if t["age"] < 0 {
+      add(hits, "warn", "timer has never fired", t["unit"], "no last-trigger time recorded")
+      continue
+    }
+    if t["age"] > stale {
+      add(hits, "warn", "last fired " + human_age(t["age"]), t["unit"],
+          "older than the " + str(stale) + "h threshold")
+    }
+  }
+
+  # only real data backups count toward "is anything backing up"
+  let found_any = 0
+  for c in crons {
+    if not c["system"] { found_any = found_any + 1 }
+  }
+  for t in timers {
+    if not t["system"] { found_any = found_any + 1 }
+  }
+
+  let sorted_hits = []
+  for h in hits {
+    let j = 0
+    while j < len(sorted_hits) {
+      if rank(h["sev"]) < rank(sorted_hits[j]["sev"]) { break }
+      j = j + 1
+    }
+    sorted_hits.insert(j, h)
+  }
+
+  if as_j {
+    let out = "{\n  \"tools_installed\": ["
+    let f = true
+    for t in tools {
+      if not f { out = out + ", " }
+      f = false
+      out = out + "\"" + jesc(t["tool"]) + "\""
+    }
+    out = out + "],\n  \"cron_jobs\": " + str(len(crons))
+        + ",\n  \"timer_jobs\": " + str(len(timers))
+        + ",\n  \"jobs_found\": " + str(found_any)
+        + ",\n  \"stale_threshold_hours\": " + str(stale)
+        + ",\n  \"findings\": ["
+    f = true
+    for h in sorted_hits {
+      if not f { out = out + ", " }
+      f = false
+      out = out + "{\"severity\": \"" + h["sev"] + "\", \"issue\": \"" + jesc(h["kind"])
+          + "\", \"where\": \"" + jesc(h["who"]) + "\", \"detail\": \"" + jesc(h["detail"]) + "\"}"
+    }
+    print(out + "]\n}")
+    return 0
+  }
+
+  print("BACKUP TOOLS INSTALLED")
+  print("".ljust(74, "-"))
+  if len(tools) == 0 { print("  none of the usual ones") }
+  for t in tools { print("  " + t["tool"].ljust(16) + t["path"]) }
+
+  print("")
+  print("SCHEDULED BACKUP-SHAPED JOBS")
+  print("".ljust(74, "-"))
+  if found_any == 0 {
+    print("  none found in cron, cron.d, user crontabs, the run-parts")
+    print("  directories, or systemd timers")
+  }
+  for c in crons {
+    if c["system"] { continue }
+    print("  cron   " + c["source"])
+    print("         " + c["cmd"])
+    if c["log"] != "" {
+      print("         log " + c["log"] + " last written " + human_age(c["age"]))
+    }
+  }
+  for t in timers {
+    if t["system"] { continue }
+    let r = t["result"]
+    if r == "" { r = "unknown" }
+    print("  timer  " + t["unit"] + "  last fired " + human_age(t["age"])
+          + ", result " + r)
+  }
+
+  let sysjobs = []
+  for c in crons {
+    if c["system"] { sysjobs.push("cron " + c["source"]) }
+  }
+  for t in timers {
+    if t["system"] { sysjobs.push("timer " + t["unit"]) }
+  }
+  if len(sysjobs) > 0 {
+    print("")
+    print("  Ignored - these match \"backup\" but back up no data of yours:")
+    for j in sysjobs { print("    " + j) }
+  }
+
+  print("")
+  if found_any == 0 {
+    print("NOTHING ON THIS MACHINE APPEARS TO BACK ANYTHING UP.")
+    print("".ljust(74, "-"))
+    print("That is worth confirming rather than assuming either way, because")
+    print("this tool can only see backups taken from inside the machine.")
+    print("A hypervisor snapshot, a provider volume backup or a storage-level")
+    print("replica would all be invisible here.")
+    print("")
+    print("So: either backups happen somewhere this cannot see, or there are")
+    print("none. Only you know which.")
+    return 0
+  }
+
+  if len(sorted_hits) == 0 {
+    print("Every backup job found has run within the last " + str(stale) + " hours")
+    print("and reported success.")
+    return 0
+  }
+
+  print("FINDINGS")
+  print("".ljust(74, "-"))
+  let bad = 0
+  for h in sorted_hits {
+    if h["sev"] == "bad" { bad = bad + 1 }
+    print("  " + h["sev"].ljust(6) + h["kind"] + "  [" + h["who"] + "]")
+    print("         " + h["detail"])
+    print("")
+  }
+  print(str(len(sorted_hits)) + " finding(s), " + str(bad) + " serious")
+  return 0
+}
+
+main()

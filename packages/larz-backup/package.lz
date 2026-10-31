@@ -1,0 +1,23 @@
+# larz-backup - Whether anything is backing up, and when it last succeeded
+#
+# The failure this exists for is not "no backups". It is a backup job that is
+# scheduled, has been for two years, and last succeeded in March - because a
+# backup that fails quietly produces exactly as much output as one that works.
+# It can only see backups taken from inside the machine, and says so rather
+# than reporting "none" when a hypervisor snapshot is doing the job.
+
+import "larzos/pkg" as pkg
+
+pkg.package({
+  "name":    "larz-backup",
+  "version": "0.1.0",
+  "summary": "Whether anything is backing up, and when it last succeeded",
+  "arch":    "all",
+  "section": "admin",
+  "depends": ["larzscript"],
+  "build":   [],
+  "install": [
+    "install -Dm755 files/larz-backup    $DESTDIR/usr/bin/larz-backup",
+    "install -Dm644 files/larz-backup.lz $DESTDIR/usr/lib/larzos/larz-backup.lz",
+  ],
+})
