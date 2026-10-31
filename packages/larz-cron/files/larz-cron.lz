@@ -1,0 +1,406 @@
+# larz-cron - every scheduled job on this machine, in one list, in English.
+#
+# Scheduled work on a Debian box hides in six different places: /etc/crontab,
+# /etc/cron.d, each user's spool crontab, the run-parts directories, and
+# systemd timers. Nothing ships that shows all of them together, so a job you
+# forgot is effectively invisible. This collects all six and translates the
+# five-field cron syntax into a sentence, because "17 3 * * 1" is not something
+# a human should have to decode under pressure.
+
+let DOW = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday",
+           "Friday", "Saturday"]
+let MON = ["", "January", "February", "March", "April", "May", "June",
+           "July", "August", "September", "October", "November", "December"]
+
+fn pad2(n) {
+  let s = str(n)
+  if len(s) < 2 { return "0" + s }
+  return s
+}
+
+fn is_num(s) {
+  if s == "" { return false }
+  let i = 0
+  while i < len(s) {
+    if not "0123456789".contains(s[i]) { return false }
+    i = i + 1
+  }
+  return true
+}
+
+# "*/15" -> 15, else 0. Only the step form is interpreted; lists and ranges are
+# reported verbatim rather than guessed at.
+fn step_of(f) {
+  if not f.starts_with("*/") { return 0 }
+  let rest = f.replace("*/", "")
+  if is_num(rest) { return int(rest) }
+  return 0
+}
+
+fn plural(n, word) {
+  if n == 1 { return "1 " + word }
+  return str(n) + " " + word + "s"
+}
+
+fn dow_name(f) {
+  if is_num(f) {
+    let d = int(f)
+    if d == 7 { d = 0 }
+    if d >= 0 and d < 7 { return DOW[d] }
+  }
+  let low = f.lower()
+  for i in range(0, 7) {
+    if DOW[i].lower().starts_with(low) { return DOW[i] }
+  }
+  return f
+}
+
+# "1-5" -> "Mon-Fri", "2,4" -> "Tue, Thu". Anything unrecognised is returned
+# unchanged rather than mangled.
+fn dow_phrase(f) {
+  if f.contains("-") and not f.contains(",") {
+    let ab = f.split("-")
+    if len(ab) == 2 and is_num(ab[0]) and is_num(ab[1]) {
+      return dow_name(ab[0])[0:3] + "-" + dow_name(ab[1])[0:3]
+    }
+  }
+  if f.contains(",") {
+    let out = ""
+    let ok = true
+    for p in f.split(",") {
+      if not is_num(p) { ok = false }
+    }
+    if ok {
+      for p in f.split(",") {
+        if out != "" { out = out + ", " }
+        out = out + dow_name(p)[0:3]
+      }
+      return out
+    }
+  }
+  return f
+}
+
+fn at_time(hh, mm) {
+  if is_num(hh) and is_num(mm) {
+    return "at " + pad2(int(hh)) + ":" + pad2(int(mm))
+  }
+  let s = step_of(hh)
+  if s > 0 { return "every " + plural(s, "hour") }
+  return "at " + hh + ":" + mm
+}
+
+# The readable rendering. Anything this cannot describe confidently falls back
+# to the raw expression - a wrong sentence is worse than the original syntax.
+fn describe(mi, hh, dom, mo, dw) {
+  if mi == "*" and hh == "*" and dom == "*" and mo == "*" and dw == "*" {
+    return "every minute"
+  }
+
+  let ms = step_of(mi)
+  if ms > 0 and hh == "*" and dom == "*" and mo == "*" and dw == "*" {
+    return "every " + plural(ms, "minute")
+  }
+  # "17 * * * *" - the form Debian's own /etc/crontab uses - is common enough
+  # that falling back to raw syntax here would undercut the whole tool.
+  if is_num(mi) and hh == "*" and dom == "*" and mo == "*" and dw == "*" {
+    return "every hour (at :" + pad2(int(mi)) + ")"
+  }
+  let hs = step_of(hh)
+  if is_num(mi) and hs > 0 and dom == "*" and mo == "*" and dw == "*" {
+    return "every " + plural(hs, "hour") + " (at :" + pad2(int(mi)) + ")"
+  }
+  if ms > 0 and hs > 0 and dom == "*" and mo == "*" and dw == "*" {
+    return "every " + plural(ms, "minute") + ", every " + plural(hs, "hour")
+  }
+
+  # "15 2,8,14,20 * * *" - a list of hours at a fixed minute. Common in
+  # hand-written crontabs and the last form that fell back to raw syntax.
+  if is_num(mi) and hh.contains(",") {
+    let all_num = true
+    for p in hh.split(",") {
+      if not is_num(p) { all_num = false }
+    }
+    if all_num and dom == "*" and mo == "*" {
+      let times = ""
+      for p in hh.split(",") {
+        if times != "" { times = times + ", " }
+        times = times + pad2(int(p)) + ":" + pad2(int(mi))
+      }
+      if dw == "*" { return "daily at " + times }
+      return "on " + dow_phrase(dw) + " at " + times
+    }
+  }
+
+  # a specific time of day
+  if is_num(mi) and is_num(hh) {
+    let when = at_time(hh, mi)
+    if dom == "*" and mo == "*" and dw == "*" { return "daily " + when }
+    if dom == "*" and mo == "*" and dw != "*" {
+      if dw.contains(",") or dw.contains("-") {
+        return "on " + dow_phrase(dw) + " " + when
+      }
+      return "weekly on " + dow_name(dw) + " " + when
+    }
+    if dom != "*" and mo == "*" and dw == "*" {
+      if is_num(dom) { return "monthly on day " + dom + " " + when }
+      return "on day " + dom + " of each month " + when
+    }
+    if dom != "*" and mo != "*" and dw == "*" {
+      if is_num(mo) and is_num(dom) and int(mo) >= 1 and int(mo) <= 12 {
+        return "yearly on " + MON[int(mo)] + " " + dom + " " + when
+      }
+      return "on " + mo + "/" + dom + " " + when
+    }
+    return when + " (days: dom=" + dom + " mon=" + mo + " dow=" + dw + ")"
+  }
+
+  return mi + " " + hh + " " + dom + " " + mo + " " + dw
+}
+
+fn shorten(cmd, width) {
+  let c = cmd.strip()
+  if len(c) <= width { return c }
+  return c[0:width - 3] + "..."
+}
+
+# ---------------------------------------------------------------- collection
+
+fn read_lines(path) {
+  if not file_exists(path) { return [] }
+  return read_file(path).split("\n")
+}
+
+fn fields_after(line, n) {
+  # return the remainder of the line after the first n whitespace-separated
+  # fields, preserving the command's own internal spacing.
+  let parts = []
+  for p in ws(line).split(" ") {
+    if p != "" { parts.push(p) }
+  }
+  if len(parts) <= n { return "" }
+  let out = ""
+  let i = n
+  while i < len(parts) {
+    if out != "" { out = out + " " }
+    out = out + parts[i]
+    i = i + 1
+  }
+  return out
+}
+
+# cron files in the wild mix tabs and spaces freely - /etc/crontab on Debian
+# is tab-separated - so whitespace is normalised before any field splitting.
+fn ws(line) {
+  return line.replace("\t", " ")
+}
+
+fn tokens(line) {
+  let out = []
+  for p in ws(line).split(" ") {
+    if p != "" { out.push(p) }
+  }
+  return out
+}
+
+# has_user: /etc/crontab and /etc/cron.d put a username between the schedule
+# and the command. A user's own spool crontab does not. Getting this wrong
+# shifts every field by one, so it is passed in explicitly rather than sniffed.
+fn parse_crontab(path, source, has_user, jobs) {
+  for raw in read_lines(path) {
+    let line = raw.strip()
+    if line == "" { continue }
+    if line.starts_with("#") { continue }
+    # environment assignments (PATH=, SHELL=, MAILTO=) are not jobs
+    if line.contains("=") and not line.contains(" ") { continue }
+    let t = tokens(line)
+    if len(t) < 6 { continue }
+
+    if t[0].starts_with("@") {
+      let nick = t[0].lower()
+      let human = nick
+      if nick == "@reboot" { human = "at boot" }
+      if nick == "@hourly" { human = "every hour" }
+      if nick == "@daily" or nick == "@midnight" { human = "daily at 00:00" }
+      if nick == "@weekly" { human = "weekly on Sunday at 00:00" }
+      if nick == "@monthly" { human = "monthly on day 1 at 00:00" }
+      if nick == "@yearly" or nick == "@annually" { human = "yearly on January 1" }
+      let skip = 1
+      let usr = "root"
+      if has_user { usr = t[1] skip = 2 }
+      jobs.push({"when": human, "raw": t[0], "user": usr,
+                 "cmd": fields_after(line, skip), "source": source})
+      continue
+    }
+
+    if not is_num(t[0]) and not t[0].contains("*") and not t[0].contains(",") {
+      continue
+    }
+    let skip = 5
+    let usr = "root"
+    if has_user {
+      if len(t) < 7 { continue }
+      usr = t[5]
+      skip = 6
+    }
+    jobs.push({"when": describe(t[0], t[1], t[2], t[3], t[4]),
+               "raw": t[0] + " " + t[1] + " " + t[2] + " " + t[3] + " " + t[4],
+               "user": usr, "cmd": fields_after(line, skip), "source": source})
+  }
+}
+
+fn collect_rundirs(jobs) {
+  let specs = [["hourly", "every hour"], ["daily", "once a day"],
+               ["weekly", "once a week"], ["monthly", "once a month"]]
+  for sp in specs {
+    let d = "/etc/cron." + sp[0]
+    if not file_exists(d) { continue }
+    for f in listdir(d) {
+      if f.starts_with(".") { continue }
+      if f.ends_with(".dpkg-dist") or f.ends_with(".dpkg-old") { continue }
+      if f == "README" or f == ".placeholder" { continue }
+      jobs.push({"when": sp[1], "raw": "run-parts", "user": "root",
+                 "cmd": d + "/" + f, "source": "cron." + sp[0]})
+    }
+  }
+}
+
+# "{ OnCalendar=*-*-* 06,18:00:00 ; next_elapse=... }" -> "*-*-* 06,18:00:00"
+fn unwrap_prop(v, key) {
+  if not v.contains(key + "=") { return "" }
+  let after = v.split(key + "=")[1]
+  let expr = after.split(";")[0]
+  return expr.replace("}", "").strip()
+}
+
+fn timer_sched(unit) {
+  let cal = capture("systemctl show -p TimersCalendar --value " + unit + " 2>/dev/null").strip()
+  let e = unwrap_prop(cal, "OnCalendar")
+  if e != "" { return e }
+  let mono = capture("systemctl show -p TimersMonotonic --value " + unit + " 2>/dev/null").strip()
+  for k in ["OnBootSec", "OnUnitActiveSec", "OnStartupSec", "OnUnitInactiveSec"] {
+    let m = unwrap_prop(mono, k)
+    if m != "" { return k.replace("On", "").replace("Sec", "") + " + " + m }
+  }
+  return "(event-driven)"
+}
+
+fn collect_timers(jobs) {
+  # systemd timers are the other half of "scheduled work"; omitting them would
+  # make this tool confidently incomplete.
+  let out = capture("systemctl list-timers --all --no-legend --no-pager 2>/dev/null")
+  for raw in out.split("\n") {
+    let line = raw.strip()
+    if line == "" { continue }
+    let t = tokens(line)
+    if len(t) < 2 { continue }
+    let unit = ""
+    for p in t {
+      if p.ends_with(".timer") { unit = p }
+    }
+    if unit == "" { continue }
+    let sched = timer_sched(unit)
+    jobs.push({"when": sched, "raw": "systemd", "user": "root",
+               "cmd": unit, "source": "systemd-timer"})
+  }
+}
+
+fn collect_user_crontabs(jobs) {
+  let spool = "/var/spool/cron/crontabs"
+  if not file_exists(spool) { return 0 }
+  for u in listdir(spool) {
+    if u.starts_with(".") { continue }
+    parse_crontab(spool + "/" + u, "crontab:" + u, false, jobs)
+  }
+  return 0
+}
+
+fn jesc(s) {
+  return s.replace("\\", "\\\\").replace("\"", "\\\"")
+}
+
+fn as_json(jobs) {
+  let out = "[\n"
+  let first = true
+  for j in jobs {
+    if not first { out = out + ",\n" }
+    first = false
+    out = out + "  {\"source\": \"" + jesc(j["source"]) + "\", \"schedule\": \""
+        + jesc(j["raw"]) + "\", \"description\": \"" + jesc(j["when"])
+        + "\", \"user\": \"" + jesc(j["user"]) + "\", \"command\": \""
+        + jesc(j["cmd"]) + "\"}"
+  }
+  return out + "\n]"
+}
+
+fn main() {
+  let as_j = false
+  let filt = ""
+  let i = 0
+  while i < len(args) {
+    let a = args[i]
+    if a == "--json" { as_j = true }
+    if a == "--grep" {
+      if i + 1 < len(args) { filt = args[i + 1].lower() }
+    }
+    if a == "-h" or a == "--help" {
+      print("larz-cron - every scheduled job on this machine, in one list")
+      print("")
+      print("usage: larz-cron [--grep TEXT] [--json]")
+      print("")
+      print("  --grep TEXT  only jobs whose command or schedule matches TEXT")
+      print("  --json       machine-readable output")
+      print("")
+      print("Covers /etc/crontab, /etc/cron.d, every user crontab,")
+      print("/etc/cron.{hourly,daily,weekly,monthly} and systemd timers.")
+      return 0
+    }
+    i = i + 1
+  }
+
+  let jobs = []
+  parse_crontab("/etc/crontab", "/etc/crontab", true, jobs)
+  if file_exists("/etc/cron.d") {
+    for f in listdir("/etc/cron.d") {
+      if f.starts_with(".") { continue }
+      if f.ends_with(".dpkg-dist") or f.ends_with(".dpkg-old") { continue }
+      if f == "README" { continue }
+      parse_crontab("/etc/cron.d/" + f, "cron.d/" + f, true, jobs)
+    }
+  }
+  collect_user_crontabs(jobs)
+  collect_rundirs(jobs)
+  collect_timers(jobs)
+
+  let shown = []
+  for j in jobs {
+    if filt != "" {
+      if not (j["cmd"].lower().contains(filt) or j["when"].lower().contains(filt)
+              or j["source"].lower().contains(filt)) { continue }
+    }
+    shown.push(j)
+  }
+
+  if as_j {
+    print(as_json(shown))
+    return 0
+  }
+
+  print("WHEN".ljust(34) + "USER".ljust(8) + "COMMAND")
+  print("".ljust(100, "-"))
+  let last = ""
+  for j in shown {
+    if j["source"] != last {
+      print("")
+      print("[" + j["source"] + "]")
+      last = j["source"]
+    }
+    print(shorten(j["when"], 33).ljust(34) + j["user"].ljust(8)
+          + shorten(j["cmd"], 58))
+  }
+  print("")
+  print(str(len(shown)) + " scheduled job(s)")
+  return 0
+}
+
+main()

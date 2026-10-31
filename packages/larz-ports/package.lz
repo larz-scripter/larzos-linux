@@ -1,0 +1,22 @@
+# larz-ports - listening TCP sockets with an exposure verdict.
+#
+# `larz doctor` reports failed units and free disk but nothing about the
+# network surface, and ss(8) lists sockets without saying which of them a
+# stranger can reach. This reads /proc/net/tcp{,6} directly and labels every
+# listener EXPOSED / IFACE / LOCAL.
+
+import "larzos/pkg" as pkg
+
+pkg.package({
+  "name":       "larz-ports",
+  "version":    "0.1.0",
+  "summary":    "Listening TCP sockets with an exposure verdict (EXPOSED/IFACE/LOCAL)",
+  "arch":       "all",
+  "section":    "admin",
+  "depends":    ["larzscript"],
+  "build":      [],
+  "install": [
+    "install -Dm755 files/larz-ports $DESTDIR/usr/bin/larz-ports",
+    "install -Dm644 files/larz-ports.lz $DESTDIR/usr/lib/larzos/larz-ports.lz",
+  ],
+})

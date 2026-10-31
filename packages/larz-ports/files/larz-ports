@@ -1,0 +1,3 @@
+#!/bin/sh
+# LarzOS - larz-ports wrapper.
+exec env LARZSCRIPT_PATH=/usr/lib/larzos larzscript /usr/lib/larzos/larz-ports.lz "$@"

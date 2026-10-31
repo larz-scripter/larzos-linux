@@ -1,0 +1,23 @@
+# larz-cron - one list of every scheduled job on the machine.
+#
+# Scheduled work hides in six places on a Debian system: /etc/crontab,
+# /etc/cron.d, each user's spool crontab, the three run-parts directories and
+# systemd timers. Nothing in the base system shows them together, so a job you
+# forgot is invisible. This collects all six and renders the cron syntax as a
+# sentence.
+
+import "larzos/pkg" as pkg
+
+pkg.package({
+  "name":    "larz-cron",
+  "version": "0.1.0",
+  "summary": "Every scheduled job on this machine, in one list, in plain English",
+  "arch":    "all",
+  "section": "admin",
+  "depends": ["larzscript"],
+  "build":   [],
+  "install": [
+    "install -Dm755 files/larz-cron    $DESTDIR/usr/bin/larz-cron",
+    "install -Dm644 files/larz-cron.lz $DESTDIR/usr/lib/larzos/larz-cron.lz",
+  ],
+})

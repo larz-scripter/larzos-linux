@@ -1,0 +1,2 @@
+#!/bin/sh
+exec env LARZSCRIPT_PATH=/usr/lib/larzos larzscript /usr/lib/larzos/larz-cron.lz "$@"
