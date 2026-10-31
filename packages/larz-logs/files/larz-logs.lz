@@ -1,0 +1,275 @@
+# larz-logs - what is filling the logs, and what is actually erroring.
+#
+# `tail -f` shows you the last thing that happened. It does not tell you that
+# the same line has appeared forty thousand times, which is the thing worth
+# knowing: a log full of one repeated error is a single broken thing, not forty
+# thousand problems, and the loudest pattern is usually the one nobody has
+# looked at.
+#
+# So this groups error lines by *shape* rather than by text. Every run of
+# digits becomes "#", which collapses timestamps, pids, ports and client
+# addresses, so these two lines:
+#
+#   [Sat Oct 31 10:41:50 2026] [pid 2718733] [client 34.129.6.246:46940] denied
+#   [Sat Oct 31 11:20:05 2026] [pid 2718733] [client 45.148.10.5:44088]  denied
+#
+# become one pattern with a count of two.
+#
+# The grouping pipeline is sed/sort/uniq rather than character-by-character
+# Larzscript, because that is exactly the short shell glue those tools exist
+# for, and it keeps a scan of tens of thousands of lines instant.
+
+let BASELINE = "/root/.larz_logs_baseline.json"
+let TAIL_LINES = 4000
+
+# Words that mark a line as worth grouping. Deliberately not "warn" by default:
+# warnings are numerous and mostly routine, and including them buries the
+# errors. --warn adds them.
+let ERR_WORDS = "error|errno|fail|failed|failure|denied|refused|timeout|timed out|exception|traceback|critical|fatal|panic|segfault|cannot|unable to|not found"
+let WARN_WORDS = "warn|warning|deprecat"
+
+fn tokens(line) {
+  let out = []
+  for p in line.replace("\t", " ").split(" ") {
+    if p != "" { out.push(p) }
+  }
+  return out
+}
+
+fn is_num(s) {
+  if s == "" { return false }
+  let i = 0
+  while i < len(s) {
+    if not "0123456789".contains(s[i]) { return false }
+    i = i + 1
+  }
+  return true
+}
+
+fn human(kb) {
+  if kb < 1024 { return str(kb) + "K" }
+  let mb = kb / 1024.0
+  if mb < 1024 {
+    let w = int(mb)
+    let t = int((mb - w) * 10 + 0.5)
+    if t >= 10 { w = w + 1 t = 0 }
+    return str(w) + "." + str(t) + "M"
+  }
+  let gb = mb / 1024.0
+  let w = int(gb)
+  let t = int((gb - w) * 10 + 0.5)
+  if t >= 10 { w = w + 1 t = 0 }
+  return str(w) + "." + str(t) + "G"
+}
+
+# --------------------------------------------------------------- the files
+
+fn big_logs(n) {
+  let rows = []
+  # only live logs: a rotated *.1 or *.gz is history, and larz-disk already
+  # reports those as reclaimable
+  let out = capture("find /var/log -maxdepth 3 -type f \\( -name '*.log' -o -name 'syslog' -o -name 'messages' -o -name 'auth.log' \\) ! -name '*.gz' ! -name '*.[0-9]' -printf '%k %p\\n' 2>/dev/null | sort -rn | head -" + str(n))
+  for line in out.split("\n") {
+    let t = tokens(line)
+    if len(t) < 2 { continue }
+    if not is_num(t[0]) { continue }
+    rows.push({"kb": int(t[0]), "path": t[1]})
+  }
+  return rows
+}
+
+# ------------------------------------------------------------- the patterns
+
+fn patterns(path, words, top) {
+  # One pipeline: take the tail, keep the error-ish lines, blank every run of
+  # digits so near-identical lines coincide, then count. sed/sort/uniq do this
+  # in milliseconds on data that would take a scripted loop seconds.
+  let cmd = "tail -n " + str(TAIL_LINES) + " '" + path + "' 2>/dev/null"
+          + " | grep -aiE '" + words + "'"
+          + " | sed -E 's/[0-9]+/#/g'"
+          + " | sed -E 's/^\\[[^]]*\\][[:space:]]*//'"
+          + " | sed -E 's/^#[-:.,+TZ#]+[[:space:]]*//'"
+          + " | sed -E 's/^#[-:.,+TZ#]+[[:space:]]*//'"
+          + " | sed -E 's/^[A-Za-z0-9_.-]+[[:space:]]+([A-Za-z0-9_/-]+(\\[#\\])?:)/\\1/'"
+          + " | sed -E 's/[[:space:]]+/ /g; s/^ //; s/ $//'"
+          + " | sort | uniq -c | sort -rn | head -" + str(top)
+  let out = capture(cmd)
+  let rows = []
+  for line in out.split("\n") {
+    let t = line.strip()
+    if t == "" { continue }
+    let f = tokens(t)
+    if len(f) < 2 { continue }
+    if not is_num(f[0]) { continue }
+    # rebuild the message after the count
+    let msg = ""
+    let i = 1
+    while i < len(f) {
+      if msg != "" { msg = msg + " " }
+      msg = msg + f[i]
+      i = i + 1
+    }
+    rows.push({"count": int(f[0]), "pattern": msg})
+  }
+  return rows
+}
+
+fn total_matching(path, words) {
+  let out = capture("tail -n " + str(TAIL_LINES) + " '" + path
+                    + "' 2>/dev/null | grep -acEi '" + words + "'").strip()
+  if is_num(out) { return int(out) }
+  return 0
+}
+
+# ------------------------------------------------------------------ growth
+
+fn load_baseline() {
+  if not file_exists(BASELINE) { return {} }
+  let raw = ""
+  raw = read_file(BASELINE)
+  let d = {}
+  # a tiny reader for the flat {"path": kb} map this writes itself - no JSON
+  # dependency for one line of state
+  for part in raw.replace("{", "").replace("}", "").split(",") {
+    let p = part.strip()
+    if not p.contains(":") { continue }
+    let k = p.split(":")[0].strip().replace("\"", "")
+    let v = p.split(":")[1].strip()
+    if k != "" and is_num(v) { d[k] = int(v) }
+  }
+  return d
+}
+
+fn save_baseline(rows) {
+  let out = "{"
+  let first = true
+  for r in rows {
+    if not first { out = out + "," }
+    first = false
+    out = out + "\"" + r["path"] + "\": " + str(r["kb"])
+  }
+  write_file(BASELINE, out + "}")
+  run("chmod 600 " + BASELINE)
+  return 0
+}
+
+fn jesc(s) {
+  return s.replace("\\", "\\\\").replace("\"", "\\\"")
+}
+
+fn main() {
+  let as_j = false
+  let include_warn = false
+  let top = 6
+  let files = 6
+  let i = 0
+  while i < len(args) {
+    let a = args[i]
+    if a == "--json" { as_j = true }
+    if a == "--warn" { include_warn = true }
+    if a == "--top" {
+      if i + 1 < len(args) {
+        if is_num(args[i + 1]) { top = int(args[i + 1]) }
+      }
+    }
+    if a == "-h" or a == "--help" {
+      print("larz-logs - what is filling the logs, and what is actually erroring")
+      print("")
+      print("usage: larz-logs [--top N] [--warn] [--json]")
+      print("")
+      print("  --top N   patterns to show per log (default 6)")
+      print("  --warn    include warnings as well as errors")
+      print("  --json    machine-readable output")
+      print("")
+      print("Error lines are grouped by shape: every run of digits becomes")
+      print("\"#\", so lines differing only by timestamp, pid, port or client")
+      print("address collapse into one pattern with a count. Growth since the")
+      print("last run is reported from a small baseline file.")
+      return 0
+    }
+    i = i + 1
+  }
+
+  let words = ERR_WORDS
+  if include_warn { words = ERR_WORDS + "|" + WARN_WORDS }
+
+  let logs = big_logs(files)
+  if len(logs) == 0 {
+    print("No live log files found under /var/log.")
+    return 0
+  }
+
+  let prev = load_baseline()
+  let results = []
+  for l in logs {
+    let grew = -1
+    if prev.has(l["path"]) { grew = l["kb"] - prev[l["path"]] }
+    results.push({"path": l["path"], "kb": l["kb"], "grew": grew,
+                  "matched": total_matching(l["path"], words),
+                  "patterns": patterns(l["path"], words, top)})
+  }
+  save_baseline(logs)
+
+  let jrnl = capture("journalctl --disk-usage 2>/dev/null").strip()
+
+  if as_j {
+    let out = "{\n  \"journal\": \"" + jesc(jrnl) + "\",\n  \"logs\": ["
+    let f1 = true
+    for r in results {
+      if not f1 { out = out + "," }
+      f1 = false
+      out = out + "\n    {\"path\": \"" + jesc(r["path"]) + "\", \"kb\": " + str(r["kb"])
+          + ", \"grew_kb\": " + str(r["grew"]) + ", \"matched_lines\": " + str(r["matched"])
+          + ", \"patterns\": ["
+      let f2 = true
+      for p in r["patterns"] {
+        if not f2 { out = out + ", " }
+        f2 = false
+        out = out + "{\"count\": " + str(p["count"]) + ", \"pattern\": \"" + jesc(p["pattern"]) + "\"}"
+      }
+      out = out + "]}"
+    }
+    print(out + "\n  ]\n}")
+    return 0
+  }
+
+  print("LOG FILES  (newest " + str(TAIL_LINES) + " lines scanned for each)")
+  print("".ljust(80, "-"))
+  for r in results {
+    let g = ""
+    if r["grew"] >= 0 { g = "  +" + human(r["grew"]) + " since last run" }
+    else { g = "  (first run - growth from next time)" }
+    print(human(r["kb"]).rjust(8) + "  " + r["path"] + g)
+  }
+  if jrnl != "" {
+    print("")
+    print("  journal: " + jrnl)
+  }
+
+  for r in results {
+    if len(r["patterns"]) == 0 { continue }
+    print("")
+    print(r["path"] + " - " + str(r["matched"]) + " error line(s) in the last "
+          + str(TAIL_LINES) + ", by shape:")
+    print("".ljust(80, "-"))
+    for p in r["patterns"] {
+      print(str(p["count"]).rjust(7) + "x  " + p["pattern"][0:66])
+    }
+  }
+
+  let quiet = true
+  for r in results {
+    if r["matched"] > 0 { quiet = false }
+  }
+  print("")
+  if quiet {
+    print("No error lines in the recent tail of any of these logs.")
+  }
+  else {
+    print("Counts are per pattern, not per line - one pattern with a large count")
+    print("is one broken thing, and usually the one nobody has looked at.")
+  }
+  return 0
+}
+
+main()

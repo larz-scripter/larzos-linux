@@ -1,0 +1,420 @@
+# larz-dns - whether the DNS behind the sites on this machine is actually right.
+#
+# DNS is where a server quietly stops matching reality: a domain still points
+# at the host you migrated off, SPF exists but DMARC never got added, two SPF
+# records cancel each other out, or the domain has been put on a blocklist and
+# every message you send is being rejected while your logs say "sent".
+#
+# The blocklist check is the reason this tool is careful rather than clever.
+# Spamhaus refuses queries from public resolvers, and a refusal looks exactly
+# like "not listed" - an empty answer. So before reporting a single blocklist
+# result, this queries a record that is *known to be listed* and checks it
+# comes back. If that control fails, blocklists are reported as UNKNOWN. A
+# false clean bill of health on deliverability is worse than no answer.
+
+let DBL_CONTROL = "dbltest.com.dbl.spamhaus.org"      # must answer 127.0.1.2
+let ZEN_CONTROL = "2.0.0.127.zen.spamhaus.org"        # must answer 127.0.0.x
+
+# selectors worth trying when looking for DKIM; there is no way to enumerate
+# them, so a miss means "none of these", not "no DKIM"
+let SELECTORS = ["default", "mail", "dkim", "s1", "s2", "k1", "k2",
+                 "google", "selector1", "selector2", "smtp", "mx",
+                 "mailhostbox", "titan1", "zoho", "protonmail", "sendgrid"]
+
+fn tokens(line) {
+  let out = []
+  for p in line.replace("\t", " ").split(" ") {
+    if p != "" { out.push(p) }
+  }
+  return out
+}
+
+fn dig(name, rtype) {
+  let out = capture("dig +short +time=4 +tries=1 " + rtype + " '" + name + "' 2>/dev/null")
+  let rows = []
+  for line in out.split("\n") {
+    let t = line.strip()
+    if t == "" { continue }
+    # a resolver error is not an answer
+    if t.starts_with(";") { continue }
+    rows.push(t)
+  }
+  return rows
+}
+
+fn first(rows) {
+  if len(rows) == 0 { return "" }
+  return rows[0]
+}
+
+fn joined(rows, sep) {
+  let out = ""
+  for r in rows {
+    if out != "" { out = out + sep }
+    out = out + r
+  }
+  return out
+}
+
+fn local_ips() {
+  let out = []
+  let raw = capture("ip -4 -o addr show scope global 2>/dev/null")
+  for line in raw.split("\n") {
+    let t = tokens(line)
+    if len(t) < 4 { continue }
+    let cidr = t[3]
+    if cidr.contains("/") { out.push(cidr.split("/")[0]) }
+  }
+  return out
+}
+
+fn contains_str(list, s) {
+  for x in list {
+    if x == s { return true }
+  }
+  return false
+}
+
+# reverse the octets: 1.2.3.4 -> 4.3.2.1, which is how an IP is queried
+fn reverse_ip(ip) {
+  let p = ip.split(".")
+  if len(p) != 4 { return "" }
+  return p[3] + "." + p[2] + "." + p[1] + "." + p[0]
+}
+
+# --------------------------------------------------------- blocklist, safely
+
+fn resolver_can_see_blocklists() {
+  # the control record is permanently listed; if it does not answer, this
+  # resolver is being refused and every "not listed" below would be a lie
+  let dbl = first(dig(DBL_CONTROL, "A"))
+  let zen = first(dig(ZEN_CONTROL, "A"))
+  let ok_dbl = dbl.starts_with("127.0.1.")
+  let ok_zen = zen.starts_with("127.0.0.")
+  return {"dbl": ok_dbl, "zen": ok_zen, "dbl_got": dbl, "zen_got": zen}
+}
+
+# Second-level suffixes where the registrable name is the last THREE labels
+# (co.uk, com.au and friends). This is a heuristic, not the Public Suffix List;
+# it covers the common cases and errs toward the shorter name.
+let SLDS = ["co", "com", "org", "net", "gov", "edu", "ac", "mil", "sch", "ne", "or", "go"]
+
+# DBL answers for any subdomain of a listed domain, so the listing has to be
+# attributed to the registrable domain or one listing reads as several.
+fn registrable(domain) {
+  let p = domain.split(".")
+  if len(p) <= 2 { return domain }
+  let second_last = p[len(p) - 2]
+  let is_sld = false
+  for x in SLDS {
+    if second_last == x { is_sld = true }
+  }
+  if is_sld and len(p) >= 3 {
+    return p[len(p) - 3] + "." + p[len(p) - 2] + "." + p[len(p) - 1]
+  }
+  return p[len(p) - 2] + "." + p[len(p) - 1]
+}
+
+fn dbl_listing(domain) {
+  let r = first(dig(domain + ".dbl.spamhaus.org", "A"))
+  if r == "" { return "" }
+  if not r.starts_with("127.0.1.") { return "" }
+  # the last octet encodes the reason
+  let code = r.split(".")[3]
+  if code == "2" { return "spam domain" }
+  if code == "4" { return "phish domain" }
+  if code == "5" { return "malware domain" }
+  if code == "6" { return "botnet C&C domain" }
+  if code == "102" { return "abused legit spam" }
+  if code == "103" { return "abused spammed redirector" }
+  if code == "104" { return "abused legit phish" }
+  if code == "105" { return "abused legit malware" }
+  if code == "106" { return "abused legit botnet" }
+  if code == "255" { return "query error (not a listing)" }
+  return "listed (" + r + ")"
+}
+
+fn zen_listing(ip) {
+  let rev = reverse_ip(ip)
+  if rev == "" { return "" }
+  let r = first(dig(rev + ".zen.spamhaus.org", "A"))
+  if r == "" { return "" }
+  if not r.starts_with("127.0.0.") { return "" }
+  let code = r.split(".")[3]
+  if code == "2" or code == "3" { return "SBL (spam source)" }
+  if code == "4" or code == "5" or code == "6" or code == "7" { return "XBL (exploited machine)" }
+  if code == "9" { return "SBL CSS" }
+  if code == "10" or code == "11" { return "PBL (not a mail server)" }
+  return "listed (" + r + ")"
+}
+
+# ------------------------------------------------------------- per domain
+
+fn spf_records(domain) {
+  let out = []
+  for t in dig(domain, "TXT") {
+    if t.lower().contains("v=spf1") { out.push(t) }
+  }
+  return out
+}
+
+fn find_dkim(domain) {
+  for sel in SELECTORS {
+    let r = dig(sel + "._domainkey." + domain, "TXT")
+    if len(r) > 0 {
+      if joined(r, "").lower().contains("v=dkim1") or joined(r, "").contains("p=") {
+        return sel
+      }
+    }
+  }
+  return ""
+}
+
+fn check_domain(domain, locals, bl_ok) {
+  let notes = []
+  let worst = "ok"
+
+  let a = dig(domain, "A")
+  if len(a) == 0 {
+    notes.push({"sev": "bad", "msg": "no A record - this name does not resolve"})
+    worst = "bad"
+  }
+  else {
+    let here = false
+    for ip in a {
+      if contains_str(locals, ip) { here = true }
+    }
+    if not here {
+      # not necessarily wrong: a CDN or load balancer in front is normal, so
+      # this is reported as information rather than as a fault
+      let ptr = first(dig(reverse_ip(a[0]) + ".in-addr.arpa", "PTR"))
+      let who = ""
+      if ptr != "" { who = " (" + ptr + ")" }
+      notes.push({"sev": "info",
+                  "msg": "A -> " + joined(a, ", ") + who + ", not an address on this host"})
+    }
+  }
+
+  let mx = dig(domain, "MX")
+  let spf = spf_records(domain)
+  let dmarc = dig("_dmarc." + domain, "TXT")
+
+  if len(mx) > 0 {
+    # a domain that receives mail is a domain that can be forged, so the
+    # three sender-authentication records all matter
+    if len(spf) == 0 {
+      notes.push({"sev": "bad", "msg": "has MX but no SPF record - anyone can forge mail as this domain"})
+      worst = "bad"
+    }
+    else {
+      if len(spf) > 1 {
+        notes.push({"sev": "bad", "msg": str(len(spf)) + " SPF records - more than one is invalid and both get ignored"})
+        worst = "bad"
+      }
+    }
+    if len(dmarc) == 0 {
+      notes.push({"sev": "warn", "msg": "no DMARC record at _dmarc." + domain})
+      if worst == "ok" { worst = "warn" }
+    }
+    else {
+      let d = joined(dmarc, " ").lower()
+      if d.contains("p=none") {
+        notes.push({"sev": "warn", "msg": "DMARC policy is p=none - it reports but enforces nothing"})
+        if worst == "ok" { worst = "warn" }
+      }
+    }
+    let sel = find_dkim(domain)
+    if sel == "" {
+      notes.push({"sev": "warn", "msg": "no DKIM found at any common selector - mail is likely unsigned"})
+      if worst == "ok" { worst = "warn" }
+    }
+    else {
+      notes.push({"sev": "info", "msg": "DKIM present (selector: " + sel + ")"})
+    }
+  }
+
+  # blocklists last, and only when the control query proved the resolver works
+  let dbl = ""
+  if bl_ok {
+    let base = registrable(domain)
+    dbl = dbl_listing(base)
+    if dbl != "" {
+      worst = "bad"
+      if base == domain {
+        notes.push({"sev": "bad", "msg": "LISTED on Spamhaus DBL as " + dbl
+                    + " - mail and links will be rejected, and the listing covers every subdomain"})
+      }
+      else {
+        notes.push({"sev": "bad", "msg": "inherits the Spamhaus DBL listing on "
+                    + base + " (" + dbl + ") - the fix belongs on that domain"})
+      }
+    }
+  }
+  else {
+    notes.push({"sev": "warn", "msg": "blocklist status UNKNOWN - this resolver is being refused by Spamhaus"})
+    if worst == "ok" { worst = "warn" }
+  }
+
+  return {"domain": domain, "status": worst, "a": joined(a, ", "),
+          "mx": joined(mx, ", "), "spf": str(len(spf)), "dmarc": str(len(dmarc)),
+          "dbl": dbl, "notes": notes}
+}
+
+fn server_names() {
+  let out = []
+  # the same per-file, symlink-following approach larz-www uses: Debian enables
+  # a vhost by symlinking, and grep -r would miss every one of them
+  for pat in ["/etc/apache2/sites-enabled/*.conf", "/etc/nginx/sites-enabled/*",
+              "/etc/nginx/conf.d/*.conf"] {
+    for line in capture("ls -1 " + pat + " 2>/dev/null").split("\n") {
+      let f = line.strip()
+      if f == "" { continue }
+      if f.contains(".bak") or f.contains(".pre-") or f.ends_with("~") { continue }
+      let cfg = capture("grep -hE '^[[:space:]]*(ServerName|ServerAlias|server_name)[[:space:]]' '"
+                        + f + "' 2>/dev/null")
+      for l in cfg.split("\n") {
+        let t = tokens(l)
+        let i = 1
+        while i < len(t) {
+          let n = t[i].replace(";", "").strip().lower()
+          i = i + 1
+          if n == "" or n == "_" { continue }
+          if n.starts_with("*") or n.contains("$") { continue }
+          # a placeholder default vhost name is not a real domain
+          if n.ends_with(".invalid") or n == "localhost" { continue }
+          if not n.contains(".") { continue }
+          if not contains_str(out, n) { out.push(n) }
+        }
+      }
+    }
+  }
+  return out
+}
+
+fn jesc(s) {
+  return s.replace("\\", "\\\\").replace("\"", "\\\"")
+}
+
+fn rank(s) {
+  if s == "bad" { return 0 }
+  if s == "warn" { return 1 }
+  return 2
+}
+
+fn main() {
+  let as_j = false
+  let only = ""
+  let i = 0
+  while i < len(args) {
+    let a = args[i]
+    if a == "--json" { as_j = true }
+    else {
+      if a == "-h" or a == "--help" {
+        print("larz-dns - whether the DNS behind this machine's sites is right")
+        print("")
+        print("usage: larz-dns [DOMAIN] [--json]")
+        print("")
+        print("  DOMAIN   check one name (default: every ServerName in the")
+        print("           Apache and nginx configs)")
+        print("  --json   machine-readable output")
+        print("")
+        print("Checks the A record against this host's own addresses, and for")
+        print("any domain with MX: SPF (and that there is only one), DMARC,")
+        print("DKIM at the common selectors, and the Spamhaus DBL.")
+        print("")
+        print("Blocklist results are only reported when a known-listed control")
+        print("record answers first. Spamhaus refuses public resolvers, and a")
+        print("refusal is indistinguishable from \"not listed\".")
+        return 0
+      }
+      if not a.starts_with("-") { only = a.lower() }
+    }
+    i = i + 1
+  }
+
+  if capture("command -v dig 2>/dev/null").strip() == "" {
+    print("larz-dns: dig is not installed, so nothing can be resolved.")
+    print("Install it with:  sudo apt install dnsutils")
+    print("")
+    print("Refusing to report a result rather than call unresolved DNS healthy.")
+    exit(2)
+  }
+
+  let names = []
+  if only != "" { names = [only] } else { names = server_names() }
+  if len(names) == 0 {
+    print("No domains found in the Apache or nginx configuration.")
+    print("Pass one explicitly:  larz-dns example.com")
+    return 0
+  }
+
+  let ctl = resolver_can_see_blocklists()
+  let bl_ok = ctl["dbl"]
+  let locals = local_ips()
+
+  let rows = []
+  for n in names { rows.push(check_domain(n, locals, bl_ok)) }
+
+  let sorted_rows = []
+  for r in rows {
+    let j = 0
+    while j < len(sorted_rows) {
+      if rank(r["status"]) < rank(sorted_rows[j]["status"]) { break }
+      j = j + 1
+    }
+    sorted_rows.insert(j, r)
+  }
+
+  if as_j {
+    let out = "[\n"
+    let f1 = true
+    for r in sorted_rows {
+      if not f1 { out = out + ",\n" }
+      f1 = false
+      out = out + "  {\"domain\": \"" + jesc(r["domain"]) + "\", \"status\": \"" + r["status"]
+          + "\", \"a\": \"" + jesc(r["a"]) + "\", \"mx\": \"" + jesc(r["mx"])
+          + "\", \"spf_records\": " + r["spf"] + ", \"dmarc_records\": " + r["dmarc"]
+          + ", \"dbl\": \"" + jesc(r["dbl"]) + "\", \"blocklist_checked\": "
+          + str(bl_ok).lower() + ", \"findings\": ["
+      let f2 = true
+      for n in r["notes"] {
+        if not f2 { out = out + ", " }
+        f2 = false
+        out = out + "{\"severity\": \"" + n["sev"] + "\", \"message\": \"" + jesc(n["msg"]) + "\"}"
+      }
+      out = out + "]}"
+    }
+    print(out + "\n]")
+    return 0
+  }
+
+  if not bl_ok {
+    print("NOTE: this resolver cannot query Spamhaus - the control lookup for")
+    print("      " + DBL_CONTROL + " returned \"" + ctl["dbl_got"] + "\"")
+    print("      instead of 127.0.1.2. Blocklist status is reported as UNKNOWN")
+    print("      rather than clear. Use the host's own resolver, not 8.8.8.8.")
+    print("")
+  }
+
+  print("STATUS  DOMAIN")
+  print("".ljust(76, "-"))
+  let bad = 0
+  for r in sorted_rows {
+    if r["status"] == "bad" { bad = bad + 1 }
+    let tag = "ok"
+    if r["status"] == "bad" { tag = "PROBLEM" }
+    if r["status"] == "warn" { tag = "CHECK" }
+    print(tag.ljust(8) + r["domain"])
+    for n in r["notes"] {
+      let mark = "  -"
+      if n["sev"] == "bad" { mark = "  !" }
+      if n["sev"] == "warn" { mark = "  ?" }
+      print("".ljust(8) + mark + " " + n["msg"])
+    }
+    print("")
+  }
+  print(str(len(sorted_rows)) + " domain(s), " + str(bad) + " with a real problem")
+  return 0
+}
+
+main()

@@ -2,6 +2,58 @@
 
 Newest first. Mirrored to <https://larzos.com/larzos-linux/>.
 
+## 2026-10-31 - 0.1.21: larz-dns, larz-units, larz-logs
+
+Three more read-only CLIs, taking the set to eleven.
+
+- **`larz-dns`** checks the A record against this host's own addresses, and for
+  any domain with MX: SPF (and that there is only one, since two cancel out),
+  DMARC, DKIM at the common selectors, and the Spamhaus DBL.
+  The blocklist check is the part worth the care. **Spamhaus refuses queries
+  from public resolvers, and a refusal is an empty answer - identical to "not
+  listed".** So before reporting any blocklist result it queries a record that
+  is known to be listed (`dbltest.com.dbl.spamhaus.org`, which must answer
+  `127.0.1.2`) and checks it comes back. If the control fails, blocklists are
+  reported as UNKNOWN with an explanation. Verified by running it in a
+  container pinned to `--dns 8.8.8.8`: against a domain that really is listed
+  as a phish domain, it correctly said UNKNOWN rather than clear.
+  Second correction found while testing: **DBL answers for every subdomain of a
+  listed domain** - even `totally-random-xyz123.larzos.com` returns the parent's
+  code - so one listing was being reported as four separate problems. Listings
+  are now attributed to the registrable domain.
+- **`larz-units`** finds what `systemctl --failed` does not: a service that
+  crashes and is restarted every minute is "active" at every instant and is
+  also not working. The first design divided restarts by *system uptime*, which
+  was wrong - a unit that restarted 8 times in 8 seconds scored 1.1/day against
+  a 7.4-day uptime and read as healthy. Two signals actually identify a live
+  loop: `SubState=auto-restart` (systemd is between restarts right now, free
+  and instant) and a second `NRestarts` read a few seconds later. The
+  rate-against-uptime stays, but only as the soft "has restarted" note it
+  always really was.
+  Three kinds of unit are enabled and inactive entirely legitimately, and
+  without excluding them the check is pure noise: `ConditionResult=no` (systemd
+  skipped it - open-vm-tools on a host that is not a VMware guest),
+  `TriggeredBy` set (socket-activated, like snapd), and run-once types
+  (`oneshot`, `idle`).
+- **`larz-logs`** groups error lines by shape rather than text: every run of
+  digits becomes `#`, so lines differing only by timestamp, pid, port or client
+  address collapse into one pattern with a count. A log full of one repeated
+  error is a single broken thing, not forty thousand problems. It also reports
+  each log's growth since the last run, from a small baseline file.
+  Getting the normalisation right took three corrections, all caught by
+  looking at the output: an IP-collapsing rule that mangled timestamps into
+  `#:#:#.#.#.#`; the leading timestamp eating most of the display width; and -
+  the good one - `T` and `Z` in the leading-strip character class (they appear
+  in ISO timestamps) turning **"Traceback"** into **"raceback"** and "The above
+  exception" into "he above exception". The strip now only fires on a run that
+  *starts* with a digit.
+  The grouping pipeline is sed/sort/uniq rather than character-by-character
+  Larzscript: that is exactly the short shell glue those tools exist for, and
+  it keeps a scan of tens of thousands of lines at 0.15s.
+
+All three are wired into the daily infrastructure health card on the build host
+alongside the other eight.
+
 ## 2026-10-31 - 0.1.20: larz-www was reading the wrong Apache config entirely
 
 Found while wiring the diagnostic CLIs into a daily health report: `larz-www`

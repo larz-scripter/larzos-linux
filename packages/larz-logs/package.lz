@@ -1,0 +1,23 @@
+# larz-logs - What is filling the logs, and what is erroring, grouped by shape
+#
+# A log full of one repeated error is a single broken thing, not forty
+# thousand problems. This groups error lines by shape - every run of digits
+# becomes "#", so lines differing only by timestamp, pid, port or client
+# address collapse into one pattern with a count - and reports growth since
+# the last run.
+
+import "larzos/pkg" as pkg
+
+pkg.package({
+  "name":    "larz-logs",
+  "version": "0.1.0",
+  "summary": "What is filling the logs, and what is erroring, grouped by shape",
+  "arch":    "all",
+  "section": "admin",
+  "depends": ["larzscript"],
+  "build":   [],
+  "install": [
+    "install -Dm755 files/larz-logs    $DESTDIR/usr/bin/larz-logs",
+    "install -Dm644 files/larz-logs.lz $DESTDIR/usr/lib/larzos/larz-logs.lz",
+  ],
+})

@@ -1,0 +1,23 @@
+# larz-units - systemd services that are failed, or quietly restarting in a loop
+#
+# `systemctl --failed` is the obvious check and misses the interesting case: a
+# service that crashes and is restarted every minute is "active" every time you
+# look at it, and is also not working. This catches that, plus services that
+# are enabled but dead and units stuck activating - while excluding the three
+# kinds of unit that are legitimately enabled and inactive.
+
+import "larzos/pkg" as pkg
+
+pkg.package({
+  "name":    "larz-units",
+  "version": "0.1.0",
+  "summary": "systemd services that are failed, or quietly restarting in a loop",
+  "arch":    "all",
+  "section": "admin",
+  "depends": ["larzscript"],
+  "build":   [],
+  "install": [
+    "install -Dm755 files/larz-units    $DESTDIR/usr/bin/larz-units",
+    "install -Dm644 files/larz-units.lz $DESTDIR/usr/lib/larzos/larz-units.lz",
+  ],
+})
